@@ -772,6 +772,10 @@ app.get('/', (req, res) => {
                     // Ersten Worker anzeigen
                     if (Object.values(data.statistics.workerStats).length > 0) {
                         showWorkerDetail(Object.values(data.statistics.workerStats)[0], tabsContainer.firstChild);
+                    } else {
+                        // Falls keine Worker-Daten vorhanden sind
+                        document.getElementById('workerDetail').innerHTML = 
+                            '<div style="text-align: center; color: #666; padding: 20px;">Keine Bearbeiter-Daten verfügbar</div>';
                     }
                     
                     // Zusammenfassungsstatistiken
