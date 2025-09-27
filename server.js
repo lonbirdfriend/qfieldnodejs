@@ -1,4 +1,4 @@
-// server.js - Erweiterte Version mit Projekt-Dashboard
+// server.js - Erweiterte Version mit professionellem Dark Theme Dashboard
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -34,7 +34,9 @@ function calculateProjectStatistics(projectData) {
       totalArea: 0,
       completedArea: 0,
       workerStats: {},
-      participantCount: 0
+      participantCount: 0,
+      dailyStats: {},
+      sunburstData: null
     };
   }
 
@@ -49,6 +51,8 @@ function calculateProjectStatistics(projectData) {
   
   // Worker-Statistiken nach Farbe gruppiert
   let workerStats = {};
+  let dailyStats = {};
+  
   ['r', 'g', 'b', 'y'].forEach(colorCode => {
     if (info.colorWorkers && info.colorWorkers[colorCode]) {
       const workerName = info.colorWorkers[colorCode];
@@ -68,14 +72,29 @@ function calculateProjectStatistics(projectData) {
             id: p.id
           }))
           .sort((a, b) => {
-            // Sortierung nach Datum (DD.MM.YYYY)
             const dateA = a.datum.split('.').reverse().join('-');
             const dateB = b.datum.split('.').reverse().join('-');
             return new Date(dateB) - new Date(dateA);
           })
       };
+
+      // Tägliche Statistiken berechnen
+      workerPolygons.forEach(p => {
+        const date = p.datum;
+        if (!dailyStats[date]) {
+          dailyStats[date] = { total: 0, workers: {} };
+        }
+        if (!dailyStats[date].workers[workerName]) {
+          dailyStats[date].workers[workerName] = { area: 0, color: colorCode };
+        }
+        dailyStats[date].total += parseFloat(p.flaeche_ha) || 0;
+        dailyStats[date].workers[workerName].area += parseFloat(p.flaeche_ha) || 0;
+      });
     }
   });
+
+  // Sunburst-Daten erstellen
+  const sunburstData = createSunburstData(workerStats, totalArea, completedArea);
 
   return {
     totalPolygons,
@@ -85,11 +104,39 @@ function calculateProjectStatistics(projectData) {
     completedArea,
     completionAreaPercentage: totalArea > 0 ? (completedArea / totalArea * 100) : 0,
     workerStats,
-    participantCount: Object.keys(workerStats).length
+    participantCount: Object.keys(workerStats).length,
+    dailyStats,
+    sunburstData
   };
 }
 
-// API Routes
+function createSunburstData(workerStats, totalArea, completedArea) {
+  const children = Object.values(workerStats).map(worker => ({
+    name: worker.name,
+    value: worker.area,
+    color: worker.color,
+    percentage: worker.percentage
+  }));
+
+  // Unbearbeitete Fläche hinzufügen
+  const unprocessedArea = totalArea - completedArea;
+  if (unprocessedArea > 0) {
+    children.push({
+      name: 'Unbearbeitet',
+      value: unprocessedArea,
+      color: 'gray',
+      percentage: (unprocessedArea / totalArea) * 100
+    });
+  }
+
+  return {
+    name: 'Projekt',
+    children: children,
+    value: totalArea
+  };
+}
+
+// API Routes (unverändert)
 app.get('/api/status', (req, res) => {
   console.log('GET /api/status - Current status:', serverStatus.status ? 'GRÜN' : 'ROT');
   res.json(serverStatus);
@@ -247,6 +294,9 @@ app.get('/api/projects', (req, res) => {
     };
   });
   
+  // Sortiere nach letztem Update (neueste zuerst)
+  projects.sort((a, b) => new Date(b.lastUpdate || 0) - new Date(a.lastUpdate || 0));
+  
   res.json({
     projects: projects,
     totalProjects: projects.length,
@@ -305,7 +355,7 @@ app.get('/api/layers', (req, res) => {
   });
 });
 
-// Haupt-Dashboard Route
+// Haupt-Dashboard Route mit Dark Theme
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -314,7 +364,24 @@ app.get('/', (req, res) => {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QField Projekt Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
     <style>
+        :root {
+            --bg-primary: #0f0f0f;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #2a2a2a;
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0b0;
+            --text-muted: #707070;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --border: #333333;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -322,237 +389,323 @@ app.get('/', (req, res) => {
         }
         
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             min-height: 100vh;
-            padding: 20px;
+            line-height: 1.6;
         }
         
         .container {
             max-width: 1400px;
             margin: 0 auto;
+            padding: 2rem;
         }
         
         .header {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 3rem;
         }
         
         .header h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 2.5em;
+            font-size: 2.5rem;
+            font-weight: 300;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent), var(--success));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
         
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+        
+        /* Projekt-Grid für Dashboard */
         .project-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
         }
         
         .project-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
             cursor: pointer;
             transition: all 0.3s ease;
-            border: 3px solid transparent;
+            position: relative;
+            overflow: hidden;
         }
         
         .project-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
-            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px var(--shadow);
+            border-color: var(--accent);
+        }
+        
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
         }
         
         .project-name {
-            font-size: 1.4em;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 15px;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .project-meta {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+        
+        .progress-section {
+            margin-bottom: 1rem;
+        }
+        
+        .progress-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
         }
         
         .progress-container {
-            background: #f0f0f0;
-            border-radius: 10px;
-            height: 25px;
-            margin-bottom: 15px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            height: 24px;
             overflow: hidden;
             position: relative;
         }
         
         .progress-bar {
             height: 100%;
-            background: linear-gradient(45deg, #4CAF50, #45a049);
-            border-radius: 10px;
+            background: linear-gradient(90deg, var(--success), var(--accent));
+            border-radius: 8px;
             transition: width 0.8s ease;
             position: relative;
         }
         
-        .progress-text {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-weight: bold;
-            font-size: 0.9em;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
-        }
-        
-        .project-stats {
+        .worker-colors {
             display: flex;
-            justify-content: space-between;
-            color: #666;
-            font-size: 0.9em;
-        }
-        
-        .stat-item {
-            text-align: center;
-        }
-        
-        .stat-number {
-            font-size: 1.2em;
-            font-weight: bold;
-            color: #333;
-        }
-        
-        .back-button {
-            background: linear-gradient(45deg, #2196F3, #1976D2);
-            color: white;
-            border: none;
-            padding: 12px 25px;
-            font-size: 1em;
-            border-radius: 25px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            transition: all 0.3s ease;
-            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
-        }
-        
-        .back-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 7px 20px rgba(33, 150, 243, 0.4);
-        }
-        
-        .project-detail {
-            display: none;
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-        }
-        
-        .overall-progress {
-            margin-bottom: 30px;
-        }
-        
-        .worker-progress {
-            display: flex;
-            height: 40px;
-            border-radius: 20px;
+            height: 6px;
+            border-radius: 3px;
             overflow: hidden;
-            margin-bottom: 20px;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 0.5rem;
         }
         
         .worker-segment {
             transition: all 0.3s ease;
-            position: relative;
-            display: flex;
+        }
+        
+        .project-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 0.75rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+        }
+        
+        .stat-number {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+        
+        /* Projekt Detail Ansicht */
+        .project-detail {
+            display: none;
+        }
+        
+        .back-button {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 0.75rem 1.5rem;
+            font-size: 0.875rem;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 2rem;
+            transition: all 0.3s ease;
+            display: inline-flex;
             align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .back-button:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--accent);
+        }
+        
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+        
+        .detail-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+        
+        .section-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+        
+        .sunburst-container {
+            display: flex;
             justify-content: center;
-            font-weight: bold;
-            color: white;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+            align-items: center;
+            min-height: 400px;
+        }
+        
+        .chronology-section {
+            grid-column: 1 / -1;
         }
         
         .worker-tabs {
             display: flex;
-            gap: 5px;
-            margin-bottom: 20px;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
         }
         
         .worker-tab {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 25px;
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
             cursor: pointer;
-            font-weight: bold;
-            color: white;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: var(--bg-tertiary);
             transition: all 0.3s ease;
-            min-width: 120px;
+            font-size: 0.875rem;
         }
         
         .worker-tab.active {
-            transform: scale(1.05);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
         }
         
-        .worker-detail {
-            background: #f9f9f9;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
+        .timeline {
+            position: relative;
         }
         
-        .chronology-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
+        .timeline-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border-left: 4px solid var(--accent);
         }
         
-        .chronology-table th,
-        .chronology-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
+        .timeline-date {
+            font-weight: 600;
+            color: var(--accent);
+            min-width: 100px;
         }
         
-        .chronology-table th {
-            background-color: #f5f5f5;
-            font-weight: bold;
-        }
-        
-        .chronology-table tr:hover {
-            background-color: #f0f0f0;
-        }
-        
-        .summary-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }
-        
-        .summary-card {
-            background: white;
+        .timeline-bar {
+            flex: 1;
+            margin: 0 1rem;
+            height: 20px;
+            background: var(--bg-primary);
             border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .timeline-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--success), var(--accent));
+            border-radius: 10px;
+            transition: width 0.8s ease;
+        }
+        
+        .timeline-value {
+            position: absolute;
+            right: 0.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 0.75rem;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        
+        .timeline-info {
+            text-align: right;
+            min-width: 80px;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .detail-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .project-stats {
+                grid-template-columns: 1fr;
+            }
+            
+            .worker-tabs {
+                justify-content: center;
+            }
+        }
+        
+        /* D3 Sunburst Styling */
+        .sunburst-chart {
+            font-family: inherit;
+        }
+        
+        .sunburst-chart text {
+            fill: var(--text-primary);
+            font-size: 11px;
+        }
+        
+        /* Utility Classes */
+        .hidden {
+            display: none !important;
+        }
+        
+        .text-center {
             text-align: center;
         }
         
-        .summary-number {
-            font-size: 2em;
-            font-weight: bold;
-            color: #2196F3;
-        }
-        
-        .summary-label {
-            color: #666;
-            margin-top: 5px;
-        }
-        
-        .hidden {
-            display: none;
-        }
+        .mt-2 { margin-top: 1rem; }
+        .mb-2 { margin-bottom: 1rem; }
     </style>
 </head>
 <body>
@@ -560,8 +713,8 @@ app.get('/', (req, res) => {
         <!-- Dashboard Übersicht -->
         <div id="dashboard">
             <div class="header">
-                <h1>🏗️ QField Projekt Dashboard</h1>
-                <p>Übersicht aller Projekte und deren Fortschritt</p>
+                <h1>Projektübersicht</h1>
+                <p>Fortschritt und Status aller QField Projekte</p>
             </div>
             
             <div id="projectGrid" class="project-grid">
@@ -571,54 +724,55 @@ app.get('/', (req, res) => {
         
         <!-- Projekt Detail Ansicht -->
         <div id="projectDetail" class="project-detail">
-            <button class="back-button" onclick="showDashboard()">← Zurück zur Übersicht</button>
+            <button class="back-button" onclick="showDashboard()">
+                ← Zurück zur Übersicht
+            </button>
             
-            <h2 id="projectTitle">Projekt Details</h2>
+            <div class="header">
+                <h1 id="projectTitle">Projekt Details</h1>
+            </div>
             
-            <div class="overall-progress">
-                <h3>Gesamtfortschritt nach Bearbeitern</h3>
-                <div id="workerProgress" class="worker-progress">
-                    <!-- Worker-Segmente werden hier eingefügt -->
+            <div class="detail-grid">
+                <div class="detail-section">
+                    <h3 class="section-title">Projektübersicht</h3>
+                    <div id="sunburstContainer" class="sunburst-container">
+                        <!-- Sunburst Chart wird hier eingefügt -->
+                    </div>
+                </div>
+                
+                <div class="detail-section">
+                    <h3 class="section-title">Statistiken</h3>
+                    <div id="projectStats">
+                        <!-- Projektstatistiken werden hier eingefügt -->
+                    </div>
                 </div>
             </div>
             
-            <div id="workerTabs" class="worker-tabs">
-                <!-- Tabs werden hier eingefügt -->
-            </div>
-            
-            <div id="workerDetail" class="worker-detail">
-                <!-- Details werden hier angezeigt -->
-            </div>
-            
-            <div class="summary-stats" id="summaryStats">
-                <!-- Zusammenfassung wird hier angezeigt -->
+            <div class="detail-section chronology-section">
+                <h3 class="section-title">Chronologische Übersicht</h3>
+                
+                <div id="workerTabs" class="worker-tabs">
+                    <!-- Tabs werden hier eingefügt -->
+                </div>
+                
+                <div id="timelineContainer" class="timeline">
+                    <!-- Timeline wird hier angezeigt -->
+                </div>
             </div>
         </div>
     </div>
 
     <script>
         let currentProject = null;
-        let currentWorker = null;
+        let currentWorker = 'all';
         
-        function getColorStyle(colorCode) {
-            switch(colorCode) {
-                case 'r': return '#f44336';
-                case 'g': return '#4CAF50';
-                case 'b': return '#2196F3';
-                case 'y': return '#FFEB3B';
-                default: return '#e0e0e0';
-            }
-        }
-        
-        function getColorName(colorCode) {
-            switch(colorCode) {
-                case 'r': return 'Rot';
-                case 'g': return 'Grün';
-                case 'b': return 'Blau';
-                case 'y': return 'Gelb';
-                default: return 'Unbekannt';
-            }
-        }
+        const colorMap = {
+            'r': '#ef4444',
+            'g': '#10b981',
+            'b': '#3b82f6',
+            'y': '#f59e0b',
+            'gray': '#6b7280'
+        };
         
         function loadProjects() {
             fetch('/api/projects')
@@ -627,7 +781,7 @@ app.get('/', (req, res) => {
                     const grid = document.getElementById('projectGrid');
                     
                     if (data.projects.length === 0) {
-                        grid.innerHTML = '<div style="text-align: center; color: white; font-size: 1.2em;">Keine Projekte gefunden</div>';
+                        grid.innerHTML = '<div class="text-center" style="color: var(--text-muted); font-size: 1.2em;">Keine Projekte gefunden</div>';
                         return;
                     }
                     
@@ -638,25 +792,44 @@ app.get('/', (req, res) => {
                         card.className = 'project-card';
                         card.onclick = () => showProject(project.name);
                         
+                        // Worker Farben für Balken
+                        const workerSegments = Object.values(project.workerStats).map(worker => 
+                            \`<div class="worker-segment" style="width: \${worker.percentage}%; background-color: \${colorMap[worker.color]};"></div>\`
+                        ).join('');
+                        
                         card.innerHTML = \`
-                            <div class="project-name">\${project.name}</div>
-                            <div class="progress-container">
-                                <div class="progress-bar" style="width: \${project.completionPercentage}%">
-                                    <div class="progress-text">\${project.completionPercentage.toFixed(1)}%</div>
+                            <div class="project-header">
+                                <div class="project-name">\${project.name}</div>
+                                <div class="project-meta">
+                                    \${new Date(project.lastUpdate).toLocaleDateString('de-DE')}
                                 </div>
                             </div>
+                            
+                            <div class="progress-section">
+                                <div class="progress-label">
+                                    <span>Fortschritt</span>
+                                    <span>\${project.completionAreaPercentage.toFixed(1)}%</span>
+                                </div>
+                                <div class="progress-container">
+                                    <div class="progress-bar" style="width: \${project.completionAreaPercentage}%"></div>
+                                </div>
+                                <div class="worker-colors">
+                                    \${workerSegments}
+                                </div>
+                            </div>
+                            
                             <div class="project-stats">
                                 <div class="stat-item">
-                                    <div class="stat-number">\${project.completedPolygons}/\${project.totalPolygons}</div>
-                                    <div>Polygone</div>
+                                    <div class="stat-number">\${project.totalArea.toFixed(1)}</div>
+                                    <div class="stat-label">Gesamtfläche (ha)</div>
                                 </div>
                                 <div class="stat-item">
-                                    <div class="stat-number">\${project.completedArea.toFixed(1)} ha</div>
-                                    <div>Bearbeitet</div>
+                                    <div class="stat-number">\${project.completedArea.toFixed(1)}</div>
+                                    <div class="stat-label">Bearbeitet (ha)</div>
                                 </div>
                                 <div class="stat-item">
                                     <div class="stat-number">\${project.participantCount}</div>
-                                    <div>Beteiligte</div>
+                                    <div class="stat-label">Beteiligte</div>
                                 </div>
                             </div>
                         \`;
@@ -667,7 +840,7 @@ app.get('/', (req, res) => {
                 .catch(error => {
                     console.error('Fehler beim Laden der Projekte:', error);
                     document.getElementById('projectGrid').innerHTML = 
-                        '<div style="text-align: center; color: white; font-size: 1.2em;">Fehler beim Laden der Projekte</div>';
+                        '<div class="text-center" style="color: var(--error); font-size: 1.2em;">Fehler beim Laden der Projekte</div>';
                 });
         }
         
@@ -681,109 +854,304 @@ app.get('/', (req, res) => {
                     document.getElementById('projectDetail').style.display = 'block';
                     document.getElementById('projectTitle').textContent = data.projectName;
                     
-                    // Gesamt-Fortschrittsbalken erstellen
-                    const workerProgress = document.getElementById('workerProgress');
-                    workerProgress.innerHTML = '';
+                    // Sunburst Chart erstellen
+                    createSunburstChart(data.statistics.sunburstData);
                     
-                    Object.values(data.statistics.workerStats).forEach(worker => {
-                        const segment = document.createElement('div');
-                        segment.className = 'worker-segment';
-                        segment.style.backgroundColor = getColorStyle(worker.color);
-                        segment.style.width = \`\${worker.percentage}%\`;
-                        segment.textContent = worker.percentage > 5 ? \`\${worker.name} \${worker.percentage.toFixed(1)}%\` : '';
-                        workerProgress.appendChild(segment);
-                    });
+                    // Projekt-Statistiken anzeigen
+                    updateProjectStats(data.statistics);
                     
                     // Worker Tabs erstellen
-                    const tabsContainer = document.getElementById('workerTabs');
-                    tabsContainer.innerHTML = '';
+                    createWorkerTabs(data.statistics.workerStats);
                     
-                    Object.values(data.statistics.workerStats).forEach((worker, index) => {
-                        const tab = document.createElement('button');
-                        tab.className = 'worker-tab' + (index === 0 ? ' active' : '');
-                        tab.style.backgroundColor = getColorStyle(worker.color);
-                        tab.textContent = worker.name;
-                        tab.onclick = () => showWorkerDetail(worker, tab);
-                        tabsContainer.appendChild(tab);
-                    });
-                    
-                    // Ersten Worker anzeigen
-                    if (Object.values(data.statistics.workerStats).length > 0) {
-                        showWorkerDetail(Object.values(data.statistics.workerStats)[0], tabsContainer.firstChild);
-                    }
-                    
-                    // Zusammenfassungsstatistiken
-                    updateSummaryStats(data.statistics);
+                    // Timeline anzeigen
+                    showTimeline('all', data.statistics);
                 })
                 .catch(error => {
                     console.error('Fehler beim Laden des Projekts:', error);
                 });
         }
         
-        function showWorkerDetail(worker, tabElement) {
-            // Tab-Status aktualisieren
-            document.querySelectorAll('.worker-tab').forEach(tab => tab.classList.remove('active'));
-            tabElement.classList.add('active');
+        function createSunburstChart(data) {
+            const container = document.getElementById('sunburstContainer');
+            container.innerHTML = '';
             
-            const detailContainer = document.getElementById('workerDetail');
-            
-            let chronologyHtml = '';
-            if (worker.chronology.length > 0) {
-                chronologyHtml = \`
-                    <h4>Chronologie (neueste zuerst)</h4>
-                    <table class="chronology-table">
-                        <thead>
-                            <tr>
-                                <th>Datum</th>
-                                <th>Polygon ID</th>
-                                <th>Fläche (ha)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            \${worker.chronology.map(entry => \`
-                                <tr>
-                                    <td>\${entry.datum}</td>
-                                    <td>\${entry.id}</td>
-                                    <td>\${entry.area.toFixed(2)}</td>
-                                </tr>
-                            \`).join('')}
-                        </tbody>
-                    </table>
-                \`;
-            } else {
-                chronologyHtml = '<div style="text-align: center; color: #666; padding: 20px;">Keine Bearbeitungen von diesem Bearbeiter</div>';
+            if (!data || !data.children || data.children.length === 0) {
+                container.innerHTML = '<div style="color: var(--text-muted);">Keine Daten für Sunburst verfügbar</div>';
+                return;
             }
             
-            detailContainer.innerHTML = \`
-                <h3 style="color: \${getColorStyle(worker.color)};">\${worker.name}</h3>
-                <div style="margin-bottom: 20px;">
-                    <strong>Gesamtfläche:</strong> \${worker.area.toFixed(2)} ha (\${worker.percentage.toFixed(1)}% des Projekts)<br>
-                    <strong>Anzahl Polygone:</strong> \${worker.polygonCount}
+            const width = 400;
+            const height = 400;
+            const radius = Math.min(width, height) / 6;
+            
+            // Color scale anhand der Worker-Farben
+            const color = d3.scaleOrdinal()
+                .domain(data.children.map(d => d.name))
+                .range(data.children.map(d => colorMap[d.color] || '#6b7280'));
+            
+            // Hierarchy erstellen
+            const hierarchy = d3.hierarchy(data)
+                .sum(d => d.value)
+                .sort((a, b) => b.value - a.value);
+            
+            const root = d3.partition()
+                .size([2 * Math.PI, hierarchy.height + 1])
+                (hierarchy);
+            
+            root.each(d => d.current = d);
+            
+            // Arc generator
+            const arc = d3.arc()
+                .startAngle(d => d.x0)
+                .endAngle(d => d.x1)
+                .padAngle(d => Math.min((d.x1 - d.x0) / 2, 0.005))
+                .padRadius(radius * 1.5)
+                .innerRadius(d => d.y0 * radius)
+                .outerRadius(d => Math.max(d.y0 * radius, d.y1 * radius - 1));
+            
+            // SVG erstellen
+            const svg = d3.select(container)
+                .append('svg')
+                .attr('class', 'sunburst-chart')
+                .attr('viewBox', [-width / 2, -height / 2, width, width])
+                .style('width', '100%')
+                .style('height', '400px');
+            
+            // Arcs hinzufügen
+            const path = svg.append('g')
+                .selectAll('path')
+                .data(root.descendants().slice(1))
+                .join('path')
+                .attr('fill', d => {
+                    while (d.depth > 1) d = d.parent;
+                    return color(d.data.name);
+                })
+                .attr('fill-opacity', d => arcVisible(d.current) ? (d.children ? 0.8 : 0.6) : 0)
+                .attr('pointer-events', d => arcVisible(d.current) ? 'auto' : 'none')
+                .attr('d', d => arc(d.current))
+                .style('cursor', 'pointer')
+                .on('click', clicked);
+            
+            // Tooltips
+            path.append('title')
+                .text(d => \`\${d.ancestors().map(d => d.data.name).reverse().join('/')}\n\${d.value.toFixed(2)} ha (\${((d.value / data.value) * 100).toFixed(1)}%)\`);
+            
+            // Labels
+            const label = svg.append('g')
+                .attr('pointer-events', 'none')
+                .attr('text-anchor', 'middle')
+                .style('user-select', 'none')
+                .selectAll('text')
+                .data(root.descendants().slice(1))
+                .join('text')
+                .attr('dy', '0.35em')
+                .attr('fill-opacity', d => +labelVisible(d.current))
+                .attr('transform', d => labelTransform(d.current))
+                .text(d => d.data.name)
+                .style('font-size', '10px')
+                .style('fill', 'var(--text-primary)');
+            
+            // Center circle
+            const parent = svg.append('circle')
+                .datum(root)
+                .attr('r', radius)
+                .attr('fill', 'none')
+                .attr('pointer-events', 'all')
+                .style('cursor', 'pointer')
+                .on('click', clicked);
+            
+            // Click handler für Zoom
+            function clicked(event, p) {
+                parent.datum(p.parent || root);
+                
+                root.each(d => d.target = {
+                    x0: Math.max(0, Math.min(1, (d.x0 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
+                    x1: Math.max(0, Math.min(1, (d.x1 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
+                    y0: Math.max(0, d.y0 - p.depth),
+                    y1: Math.max(0, d.y1 - p.depth)
+                });
+                
+                const t = svg.transition().duration(750);
+                
+                path.transition(t)
+                    .tween('data', d => {
+                        const i = d3.interpolate(d.current, d.target);
+                        return t => d.current = i(t);
+                    })
+                    .filter(function(d) {
+                        return +this.getAttribute('fill-opacity') || arcVisible(d.target);
+                    })
+                    .attr('fill-opacity', d => arcVisible(d.target) ? (d.children ? 0.8 : 0.6) : 0)
+                    .attr('pointer-events', d => arcVisible(d.target) ? 'auto' : 'none')
+                    .attrTween('d', d => () => arc(d.current));
+                
+                label.filter(function(d) {
+                    return +this.getAttribute('fill-opacity') || labelVisible(d.target);
+                }).transition(t)
+                    .attr('fill-opacity', d => +labelVisible(d.target))
+                    .attrTween('transform', d => () => labelTransform(d.current));
+            }
+            
+            function arcVisible(d) {
+                return d.y1 <= 3 && d.y0 >= 1 && d.x1 > d.x0;
+            }
+            
+            function labelVisible(d) {
+                return d.y1 <= 3 && d.y0 >= 1 && (d.y1 - d.y0) * (d.x1 - d.x0) > 0.03;
+            }
+            
+            function labelTransform(d) {
+                const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
+                const y = (d.y0 + d.y1) / 2 * radius;
+                return \`rotate(\${x - 90}) translate(\${y},0) rotate(\${x < 180 ? 0 : 180})\`;
+            }
+        }
+        
+        function updateProjectStats(stats) {
+            const container = document.getElementById('projectStats');
+            container.innerHTML = \`
+                <div style="display: grid; gap: 1rem;">
+                    <div class="stat-item">
+                        <div class="stat-number">\${stats.totalArea.toFixed(1)} ha</div>
+                        <div class="stat-label">Gesamtfläche</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">\${stats.completedArea.toFixed(1)} ha</div>
+                        <div class="stat-label">Bearbeitet</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">\${stats.completionAreaPercentage.toFixed(1)}%</div>
+                        <div class="stat-label">Fortschritt</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">\${stats.totalPolygons}</div>
+                        <div class="stat-label">Polygone gesamt</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">\${stats.completedPolygons}</div>
+                        <div class="stat-label">Polygone bearbeitet</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">\${stats.participantCount}</div>
+                        <div class="stat-label">Beteiligte</div>
+                    </div>
                 </div>
-                \${chronologyHtml}
             \`;
         }
         
-        function updateSummaryStats(stats) {
-            const container = document.getElementById('summaryStats');
-            container.innerHTML = \`
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.totalArea.toFixed(1)}</div>
-                    <div class="summary-label">Gesamtfläche (ha)</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.completedArea.toFixed(1)}</div>
-                    <div class="summary-label">Bearbeitete Fläche (ha)</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.completionAreaPercentage.toFixed(1)}%</div>
-                    <div class="summary-label">Flächenanteil abgeschlossen</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.completedPolygons}/\${stats.totalPolygons}</div>
-                    <div class="summary-label">Polygone abgeschlossen</div>
-                </div>
-            \`;
+        function createWorkerTabs(workerStats) {
+            const container = document.getElementById('workerTabs');
+            container.innerHTML = '';
+            
+            // "Alle" Tab
+            const allTab = document.createElement('button');
+            allTab.className = 'worker-tab active';
+            allTab.textContent = 'Alle';
+            allTab.onclick = () => {
+                setActiveTab(allTab);
+                showTimeline('all', currentProject.statistics);
+            };
+            container.appendChild(allTab);
+            
+            // Worker Tabs
+            Object.values(workerStats).forEach(worker => {
+                const tab = document.createElement('button');
+                tab.className = 'worker-tab';
+                tab.style.borderColor = colorMap[worker.color];
+                tab.textContent = worker.name;
+                tab.onclick = () => {
+                    setActiveTab(tab);
+                    showTimeline(worker, currentProject.statistics);
+                };
+                container.appendChild(tab);
+            });
+        }
+        
+        function setActiveTab(activeTab) {
+            document.querySelectorAll('.worker-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            activeTab.classList.add('active');
+        }
+        
+        function showTimeline(worker, stats) {
+            const container = document.getElementById('timelineContainer');
+            container.innerHTML = '';
+            
+            let timelineData = [];
+            
+            if (worker === 'all') {
+                // Alle Daten nach Datum aggregieren
+                Object.entries(stats.dailyStats).forEach(([date, dayData]) => {
+                    timelineData.push({
+                        date: date,
+                        area: dayData.total,
+                        workers: Object.entries(dayData.workers).map(([name, data]) => ({
+                            name: name,
+                            area: data.area,
+                            color: data.color
+                        }))
+                    });
+                });
+            } else {
+                // Spezifische Worker-Daten
+                worker.chronology.forEach(entry => {
+                    const existingEntry = timelineData.find(item => item.date === entry.datum);
+                    if (existingEntry) {
+                        existingEntry.area += entry.area;
+                    } else {
+                        timelineData.push({
+                            date: entry.datum,
+                            area: entry.area,
+                            worker: worker.name,
+                            color: worker.color
+                        });
+                    }
+                });
+            }
+            
+            // Sortiere nach Datum (neueste zuerst)
+            timelineData.sort((a, b) => {
+                const dateA = a.date.split('.').reverse().join('-');
+                const dateB = b.date.split('.').reverse().join('-');
+                return new Date(dateB) - new Date(dateA);
+            });
+            
+            if (timelineData.length === 0) {
+                container.innerHTML = '<div class="text-center" style="color: var(--text-muted); padding: 2rem;">Keine Daten für Timeline verfügbar</div>';
+                return;
+            }
+            
+            // Maximale Fläche für Skalierung finden
+            const maxArea = Math.max(...timelineData.map(item => item.area));
+            
+            timelineData.forEach(item => {
+                const timelineItem = document.createElement('div');
+                timelineItem.className = 'timeline-item';
+                
+                const widthPercent = (item.area / maxArea) * 100;
+                const color = worker === 'all' ? 'var(--accent)' : colorMap[item.color] || 'var(--accent)';
+                
+                let workerInfo = '';
+                if (worker === 'all' && item.workers) {
+                    workerInfo = item.workers.map(w => 
+                        \`<span style="color: \${colorMap[w.color]};">\${w.name}: \${w.area.toFixed(2)} ha</span>\`
+                    ).join(' • ');
+                }
+                
+                timelineItem.innerHTML = \`
+                    <div class="timeline-date">\${item.date}</div>
+                    <div class="timeline-bar">
+                        <div class="timeline-fill" style="width: \${widthPercent}%; background: \${color};"></div>
+                        <div class="timeline-value">\${item.area.toFixed(2)} ha</div>
+                    </div>
+                    <div class="timeline-info">
+                        \${workerInfo || (worker !== 'all' ? worker.name : '')}
+                    </div>
+                \`;
+                
+                container.appendChild(timelineItem);
+            });
         }
         
         function showDashboard() {
@@ -811,16 +1179,15 @@ app.get('/', (req, res) => {
 
 // Server starten
 app.listen(PORT, () => {
-  console.log(`
-🚀 Server läuft auf Port ${PORT}
-📊 Webinterface: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
+  console.log(\`
+🚀 Server läuft auf Port \${PORT}
+📊 Webinterface: \${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : \`http://localhost:\${PORT}\`}
 🔗 API Status: /api/status
 🔄 API Sync: /api/sync
 📋 API Projekte: /api/projects
 🎯 API Projekt Details: /api/project/:projectName
-  `);
-  console.log(`Aktueller Status: ${serverStatus.status ? 'GRÜN' : 'ROT'}`);
+  \`);
+  console.log(\`Aktueller Status: \${serverStatus.status ? 'GRÜN' : 'ROT'}\`);
 });
 
 module.exports = app;
- 
