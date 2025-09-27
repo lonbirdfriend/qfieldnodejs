@@ -55,24 +55,24 @@ function calculateProjectStatistics(projectData) {
       const workerPolygons = data.filter(p => p.farbe === colorCode && p.bearbeitet && p.datum);
       const workerArea = workerPolygons.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
       
+      // Soll-Anteil aus workerPercentages
+      const targetPercentage = info.workerPercentages ? (info.workerPercentages[colorCode] || 0) : 0;
+      const targetArea = totalArea * (targetPercentage / 100);
+      const achievedPercentage = targetArea > 0 ? (workerArea / targetArea * 100) : 0;
+      
+      // Chronologie nach Datum gruppieren
+      const chronologyByDate = groupChronologyByDate(workerPolygons);
+      
       workerStats[colorCode] = {
         name: workerName,
         color: colorCode,
         area: workerArea,
         polygonCount: workerPolygons.length,
         percentage: totalArea > 0 ? (workerArea / totalArea * 100) : 0,
-        chronology: workerPolygons
-          .map(p => ({
-            datum: p.datum,
-            area: parseFloat(p.flaeche_ha) || 0,
-            id: p.id
-          }))
-          .sort((a, b) => {
-            // Sortierung nach Datum (DD.MM.YYYY)
-            const dateA = a.datum.split('.').reverse().join('-');
-            const dateB = b.datum.split('.').reverse().join('-');
-            return new Date(dateB) - new Date(dateA);
-          })
+        targetPercentage: targetPercentage,
+        targetArea: targetArea,
+        achievedPercentage: Math.min(achievedPercentage, 100), // Max 100%
+        chronologyByDate: chronologyByDate
       };
     }
   });
@@ -87,6 +87,68 @@ function calculateProjectStatistics(projectData) {
     workerStats,
     participantCount: Object.keys(workerStats).length
   };
+}
+
+function groupChronologyByDate(polygons) {
+  const grouped = {};
+  
+  polygons.forEach(polygon => {
+    const datum = polygon.datum;
+    const area = parseFloat(polygon.flaeche_ha) || 0;
+    
+    if (!grouped[datum]) {
+      grouped[datum] = {
+        datum: datum,
+        totalArea: 0,
+        polygonIds: [],
+        polygonCount: 0
+      };
+    }
+    
+    grouped[datum].totalArea += area;
+    grouped[datum].polygonIds.push(polygon.id);
+    grouped[datum].polygonCount++;
+  });
+  
+  // In Array umwandeln und sortieren (neueste zuerst)
+  const chronologyArray = Object.values(grouped).sort((a, b) => {
+    // Sortierung nach Datum (DD.MM.YYYY)
+    const dateA = a.datum.split('.').reverse().join('-');
+    const dateB = b.datum.split('.').reverse().join('-');
+    return new Date(dateB) - new Date(dateA);
+  });
+  
+  // Tagesrate für Datumsbereiche berechnen
+  chronologyArray.forEach(entry => {
+    const datum = entry.datum;
+    
+    // Prüfen ob es ein Datumsbereich ist (enthält "bis")
+    if (datum.includes(' bis ')) {
+      const [startStr, endStr] = datum.split(' bis ');
+      const startDate = parseDate(startStr);
+      const endDate = parseDate(endStr);
+      
+      if (startDate && endDate) {
+        const daysDifference = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1; // +1 um Start- und Endtag einzuschließen
+        entry.dailyRate = daysDifference > 0 ? (entry.totalArea / daysDifference) : 0;
+        entry.dayCount = daysDifference;
+      }
+    }
+  });
+  
+  return chronologyArray;
+}
+
+function parseDate(dateStr) {
+  // Konvertiert DD.MM.YYYY zu Date-Objekt
+  const parts = dateStr.trim().split('.');
+  if (parts.length === 3) {
+    const day = parseInt(parts[0]);
+    const month = parseInt(parts[1]) - 1; // Monate sind 0-basiert
+    const year = parseInt(parts[2]);
+    return new Date(year, month, day);
+  }
+  return null;
 }
 
 // API Routes
