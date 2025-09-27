@@ -1,4 +1,4 @@
-// server.js
+// server.js - Erweiterte Version mit Projekt-Dashboard
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -8,21 +8,86 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // Für große Geometrie-Daten
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
-// Server Status (false = rot, true = grün)
+// Server Status
 let serverStatus = {
   status: false,
   lastUpdate: new Date().toISOString(),
   source: 'server'
 };
 
-// Polygon data storage
+// Polygon data storage - erweitert mit Projektinformationen
 let polygonDatabase = {
-  tables: {},
+  projects: {},  // Struktur: { projectName: { data: [], info: { name, colorWorkers, workerPercentages } } }
   lastSync: null
 };
+
+// Hilfsfunktionen für Statistiken
+function calculateProjectStatistics(projectData) {
+  if (!projectData || !projectData.data) {
+    return {
+      totalPolygons: 0,
+      completedPolygons: 0,
+      completionPercentage: 0,
+      totalArea: 0,
+      completedArea: 0,
+      workerStats: {},
+      participantCount: 0
+    };
+  }
+
+  const data = projectData.data;
+  const info = projectData.info || {};
+  
+  let totalPolygons = data.length;
+  let completedPolygons = data.filter(p => p.bearbeitet && p.datum && p.farbe).length;
+  let totalArea = data.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+  let completedArea = data.filter(p => p.bearbeitet && p.datum && p.farbe)
+    .reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+  
+  // Worker-Statistiken nach Farbe gruppiert
+  let workerStats = {};
+  ['r', 'g', 'b', 'y'].forEach(colorCode => {
+    if (info.colorWorkers && info.colorWorkers[colorCode]) {
+      const workerName = info.colorWorkers[colorCode];
+      const workerPolygons = data.filter(p => p.farbe === colorCode && p.bearbeitet && p.datum);
+      const workerArea = workerPolygons.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+      
+      workerStats[colorCode] = {
+        name: workerName,
+        color: colorCode,
+        area: workerArea,
+        polygonCount: workerPolygons.length,
+        percentage: totalArea > 0 ? (workerArea / totalArea * 100) : 0,
+        chronology: workerPolygons
+          .map(p => ({
+            datum: p.datum,
+            area: parseFloat(p.flaeche_ha) || 0,
+            id: p.id
+          }))
+          .sort((a, b) => {
+            // Sortierung nach Datum (DD.MM.YYYY)
+            const dateA = a.datum.split('.').reverse().join('-');
+            const dateB = b.datum.split('.').reverse().join('-');
+            return new Date(dateB) - new Date(dateA);
+          })
+      };
+    }
+  });
+
+  return {
+    totalPolygons,
+    completedPolygons,
+    completionPercentage: totalPolygons > 0 ? (completedPolygons / totalPolygons * 100) : 0,
+    totalArea,
+    completedArea,
+    completionAreaPercentage: totalArea > 0 ? (completedArea / totalArea * 100) : 0,
+    workerStats,
+    participantCount: Object.keys(workerStats).length
+  };
+}
 
 // API Routes
 app.get('/api/status', (req, res) => {
@@ -52,9 +117,9 @@ app.post('/api/status', (req, res) => {
   });
 });
 
-// Synchronisation Endpoint
+// Erweiterte Synchronisation mit Projektinformationen
 app.post('/api/sync', (req, res) => {
-  const { action, layerName, data, timestamp, source } = req.body;
+  const { action, layerName, data, timestamp, source, projectInfo } = req.body;
   
   console.log(`POST /api/sync - Layer: ${layerName}, Action: ${action}, Polygons: ${data ? data.length : 0}`);
   
@@ -63,13 +128,26 @@ app.post('/api/sync', (req, res) => {
   }
   
   try {
-    // Initialisiere Tabelle falls sie nicht existiert
-    if (!polygonDatabase.tables[layerName]) {
-      polygonDatabase.tables[layerName] = [];
-      console.log(`Neue Tabelle '${layerName}' erstellt`);
+    const projectName = projectInfo?.projectName || layerName;
+    
+    // Initialisiere Projekt falls es nicht existiert
+    if (!polygonDatabase.projects[projectName]) {
+      polygonDatabase.projects[projectName] = {
+        data: [],
+        info: projectInfo || {}
+      };
+      console.log(`Neues Projekt '${projectName}' erstellt`);
     }
     
-    let existingData = polygonDatabase.tables[layerName];
+    // Aktualisiere Projektinformationen
+    if (projectInfo) {
+      polygonDatabase.projects[projectName].info = {
+        ...polygonDatabase.projects[projectName].info,
+        ...projectInfo
+      };
+    }
+    
+    let existingData = polygonDatabase.projects[projectName].data;
     let mergedData = [];
     let newCount = 0;
     let updatedCount = 0;
@@ -131,8 +209,8 @@ app.post('/api/sync', (req, res) => {
       }
     });
     
-    // Aktualisiere die Datenbank
-    polygonDatabase.tables[layerName] = mergedData;
+    // Aktualisiere das Projekt
+    polygonDatabase.projects[projectName].data = mergedData;
     polygonDatabase.lastSync = new Date().toISOString();
     
     console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${mergedData.length}`);
@@ -155,29 +233,69 @@ app.post('/api/sync', (req, res) => {
   }
 });
 
-// Layer-Daten abrufen
+// Projekt-Übersicht für Dashboard
+app.get('/api/projects', (req, res) => {
+  const projects = Object.keys(polygonDatabase.projects).map(projectName => {
+    const projectData = polygonDatabase.projects[projectName];
+    const stats = calculateProjectStatistics(projectData);
+    
+    return {
+      name: projectName,
+      ...stats,
+      lastUpdate: projectData.data.length > 0 ? 
+        Math.max(...projectData.data.map(p => new Date(p.lastUpdate || 0))) : null
+    };
+  });
+  
+  res.json({
+    projects: projects,
+    totalProjects: projects.length,
+    lastSync: polygonDatabase.lastSync
+  });
+});
+
+// Detaillierte Projekt-Daten
+app.get('/api/project/:projectName', (req, res) => {
+  const { projectName } = req.params;
+  
+  if (!polygonDatabase.projects[projectName]) {
+    return res.status(404).json({ error: 'Projekt nicht gefunden' });
+  }
+  
+  const projectData = polygonDatabase.projects[projectName];
+  const stats = calculateProjectStatistics(projectData);
+  
+  res.json({
+    projectName: projectName,
+    info: projectData.info,
+    data: projectData.data,
+    statistics: stats,
+    lastSync: polygonDatabase.lastSync
+  });
+});
+
+// Legacy Endpoints für Rückwärtskompatibilität
 app.get('/api/data/:layerName', (req, res) => {
   const { layerName } = req.params;
   
-  if (!polygonDatabase.tables[layerName]) {
+  if (!polygonDatabase.projects[layerName]) {
     return res.status(404).json({ error: 'Layer nicht gefunden' });
   }
   
   res.json({
     layerName: layerName,
-    data: polygonDatabase.tables[layerName],
+    data: polygonDatabase.projects[layerName].data,
     lastSync: polygonDatabase.lastSync,
-    count: polygonDatabase.tables[layerName].length
+    count: polygonDatabase.projects[layerName].data.length
   });
 });
 
-// Alle Layer auflisten
 app.get('/api/layers', (req, res) => {
-  const layers = Object.keys(polygonDatabase.tables).map(layerName => ({
-    name: layerName,
-    polygonCount: polygonDatabase.tables[layerName].length,
-    lastUpdate: polygonDatabase.tables[layerName].length > 0 ? 
-      Math.max(...polygonDatabase.tables[layerName].map(p => new Date(p.lastUpdate || 0))) : null
+  const layers = Object.keys(polygonDatabase.projects).map(projectName => ({
+    name: projectName,
+    polygonCount: polygonDatabase.projects[projectName].data.length,
+    lastUpdate: polygonDatabase.projects[projectName].data.length > 0 ? 
+      Math.max(...polygonDatabase.projects[projectName].data.map(p => new Date(p.lastUpdate || 0))) : null
   }));
   
   res.json({
@@ -187,7 +305,7 @@ app.get('/api/layers', (req, res) => {
   });
 });
 
-// Webinterface Route
+// Haupt-Dashboard Route
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -195,18 +313,23 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QField Server Dashboard</title>
+    <title>QField Projekt Dashboard</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
+        * {
             margin: 0;
-            padding: 20px;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
+            padding: 20px;
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         
@@ -216,46 +339,91 @@ app.get('/', (req, res) => {
             padding: 30px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
         }
         
-        .cards {
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .project-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
             gap: 20px;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
         }
         
-        .card {
+        .project-card {
             background: white;
             border-radius: 15px;
             padding: 25px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        }
-        
-        .status-display {
-            font-size: 2.5em;
-            font-weight: bold;
-            padding: 20px;
-            border-radius: 15px;
-            margin: 15px 0;
-            text-align: center;
+            cursor: pointer;
             transition: all 0.3s ease;
+            border: 3px solid transparent;
         }
         
-        .status-green {
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+        
+        .project-name {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .progress-container {
+            background: #f0f0f0;
+            border-radius: 10px;
+            height: 25px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-bar {
+            height: 100%;
             background: linear-gradient(45deg, #4CAF50, #45a049);
-            color: white;
-            box-shadow: 0 10px 30px rgba(76, 175, 80, 0.3);
+            border-radius: 10px;
+            transition: width 0.8s ease;
+            position: relative;
         }
         
-        .status-red {
-            background: linear-gradient(45deg, #f44336, #d32f2f);
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             color: white;
-            box-shadow: 0 10px 30px rgba(244, 67, 54, 0.3);
+            font-weight: bold;
+            font-size: 0.9em;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
         }
         
-        .toggle-button, .refresh-button {
+        .project-stats {
+            display: flex;
+            justify-content: space-between;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .back-button {
             background: linear-gradient(45deg, #2196F3, #1976D2);
             color: white;
             border: none;
@@ -263,174 +431,174 @@ app.get('/', (req, res) => {
             font-size: 1em;
             border-radius: 25px;
             cursor: pointer;
-            margin: 10px 5px;
+            margin-bottom: 20px;
             transition: all 0.3s ease;
             box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
         }
         
-        .toggle-button:hover, .refresh-button:hover {
+        .back-button:hover {
             transform: translateY(-2px);
             box-shadow: 0 7px 20px rgba(33, 150, 243, 0.4);
         }
         
-        .data-table {
+        .project-detail {
+            display: none;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .overall-progress {
+            margin-bottom: 30px;
+        }
+        
+        .worker-progress {
+            display: flex;
+            height: 40px;
+            border-radius: 20px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .worker-segment {
+            transition: all 0.3s ease;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+        
+        .worker-tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+        }
+        
+        .worker-tab {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            color: white;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+        
+        .worker-tab.active {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .worker-detail {
+            background: #f9f9f9;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .chronology-table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
         }
         
-        .data-table th, .data-table td {
+        .chronology-table th,
+        .chronology-table td {
             padding: 12px;
             text-align: left;
             border-bottom: 1px solid #ddd;
         }
         
-        .data-table th {
+        .chronology-table th {
             background-color: #f5f5f5;
             font-weight: bold;
         }
         
-        .data-table tr:hover {
-            background-color: #f9f9f9;
+        .chronology-table tr:hover {
+            background-color: #f0f0f0;
         }
         
-        .info-box {
-            background: #e3f2fd;
-            border-left: 4px solid #2196F3;
-            padding: 15px;
-            margin: 15px 0;
-            border-radius: 5px;
-        }
-        
-        .sync-stats {
+        .summary-stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
-            margin: 20px 0;
+            margin-top: 20px;
         }
         
-        .stat-item {
-            background: #f5f5f5;
-            padding: 15px;
+        .summary-card {
+            background: white;
             border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
             text-align: center;
         }
         
-        .stat-number {
+        .summary-number {
             font-size: 2em;
             font-weight: bold;
             color: #2196F3;
         }
         
-        .stat-label {
-            font-size: 0.9em;
+        .summary-label {
             color: #666;
             margin-top: 5px;
         }
         
-        .polygon-row {
-            cursor: pointer;
-        }
-        
-        .polygon-row:hover {
-            background-color: #e3f2fd !important;
-        }
-        
-        .color-indicator {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            margin-right: 10px;
-            vertical-align: middle;
-        }
-        
-        .tab-buttons {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        
-        .tab-button {
-            background: #e0e0e0;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 25px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .tab-button.active {
-            background: #2196F3;
-            color: white;
+        .hidden {
+            display: none;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>🌐 QField Server Dashboard</h1>
-            <div id="statusDisplay" class="status-display">Lädt...</div>
-            <button class="toggle-button" onclick="toggleStatus()">Status umschalten</button>
-            <button class="refresh-button" onclick="loadAllData()">🔄 Daten aktualisieren</button>
-        </div>
-        
-        <div class="cards">
-            <div class="card">
-                <h2>📊 Synchronisation</h2>
-                <div class="sync-stats" id="syncStats">
-                    <div class="stat-item">
-                        <div class="stat-number" id="totalLayers">-</div>
-                        <div class="stat-label">Layer</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-number" id="totalPolygons">-</div>
-                        <div class="stat-label">Polygone</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-number" id="completedPolygons">-</div>
-                        <div class="stat-label">Bearbeitet</div>
-                    </div>
-                </div>
-                <div id="lastSyncTime" class="info-box">Letzte Synchronisation: -</div>
+        <!-- Dashboard Übersicht -->
+        <div id="dashboard">
+            <div class="header">
+                <h1>🏗️ QField Projekt Dashboard</h1>
+                <p>Übersicht aller Projekte und deren Fortschritt</p>
             </div>
             
-            <div class="card">
-                <h2>🗂️ Layer Übersicht</h2>
-                <div id="layersList">Lade Layer...</div>
+            <div id="projectGrid" class="project-grid">
+                <!-- Projekte werden hier dynamisch geladen -->
             </div>
         </div>
         
-        <div class="card">
-            <h2>📋 Polygon Daten</h2>
-            <div class="tab-buttons">
-                <button class="tab-button active" onclick="showTab('all')" id="tabAll">Alle</button>
-                <button class="tab-button" onclick="showTab('completed')" id="tabCompleted">Bearbeitet</button>
-                <button class="tab-button" onclick="showTab('pending')" id="tabPending">Ausstehend</button>
+        <!-- Projekt Detail Ansicht -->
+        <div id="projectDetail" class="project-detail">
+            <button class="back-button" onclick="showDashboard()">← Zurück zur Übersicht</button>
+            
+            <h2 id="projectTitle">Projekt Details</h2>
+            
+            <div class="overall-progress">
+                <h3>Gesamtfortschritt nach Bearbeitern</h3>
+                <div id="workerProgress" class="worker-progress">
+                    <!-- Worker-Segmente werden hier eingefügt -->
+                </div>
             </div>
-            <div id="polygonData">
-                <div class="info-box">Wähle einen Layer aus oder synchronisiere Daten...</div>
+            
+            <div id="workerTabs" class="worker-tabs">
+                <!-- Tabs werden hier eingefügt -->
             </div>
-        </div>
-        
-        <div class="card">
-            <h2>🔗 API Endpoints</h2>
-            <div class="info-box">
-                <strong>Status:</strong><br>
-                GET /api/status - Status abrufen<br>
-                POST /api/status - Status setzen<br><br>
-                
-                <strong>Synchronisation:</strong><br>
-                POST /api/sync - Daten synchronisieren<br>
-                GET /api/data/:layerName - Layer-Daten abrufen<br>
-                GET /api/layers - Alle Layer auflisten
+            
+            <div id="workerDetail" class="worker-detail">
+                <!-- Details werden hier angezeigt -->
+            </div>
+            
+            <div class="summary-stats" id="summaryStats">
+                <!-- Zusammenfassung wird hier angezeigt -->
             </div>
         </div>
     </div>
 
     <script>
-        let currentTab = 'all';
-        let currentLayerData = null;
+        let currentProject = null;
+        let currentWorker = null;
         
         function getColorStyle(colorCode) {
             switch(colorCode) {
@@ -452,180 +620,189 @@ app.get('/', (req, res) => {
             }
         }
         
-        function loadStatus() {
-            fetch('/api/status')
+        function loadProjects() {
+            fetch('/api/projects')
                 .then(response => response.json())
                 .then(data => {
-                    const statusDisplay = document.getElementById('statusDisplay');
-                    const isGreen = data.status;
+                    const grid = document.getElementById('projectGrid');
                     
-                    statusDisplay.textContent = isGreen ? '🟢 GRÜN' : '🔴 ROT';
-                    statusDisplay.className = 'status-display ' + (isGreen ? 'status-green' : 'status-red');
-                })
-                .catch(error => {
-                    console.error('Fehler beim Laden des Status:', error);
-                    document.getElementById('statusDisplay').textContent = '❌ FEHLER';
-                });
-        }
-        
-        function loadLayers() {
-            fetch('/api/layers')
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('totalLayers').textContent = data.totalLayers;
-                    
-                    let totalPolygons = data.layers.reduce((sum, layer) => sum + layer.polygonCount, 0);
-                    document.getElementById('totalPolygons').textContent = totalPolygons;
-                    
-                    if (data.lastSync) {
-                        document.getElementById('lastSyncTime').innerHTML = 
-                            'Letzte Synchronisation: ' + new Date(data.lastSync).toLocaleString('de-DE');
+                    if (data.projects.length === 0) {
+                        grid.innerHTML = '<div style="text-align: center; color: white; font-size: 1.2em;">Keine Projekte gefunden</div>';
+                        return;
                     }
                     
-                    // Layer Liste
-                    let layersHtml = '';
-                    if (data.layers.length === 0) {
-                        layersHtml = '<div class="info-box">Keine Layer gefunden</div>';
-                    } else {
-                        layersHtml = '<table class="data-table"><thead><tr><th>Layer Name</th><th>Polygone</th><th>Aktion</th></tr></thead><tbody>';
-                        data.layers.forEach(layer => {
-                            layersHtml += \`<tr>
-                                <td>\${layer.name}</td>
-                                <td>\${layer.polygonCount}</td>
-                                <td><button class="refresh-button" onclick="loadLayerData('\${layer.name}')">Laden</button></td>
-                            </tr>\`;
-                        });
-                        layersHtml += '</tbody></table>';
-                    }
+                    grid.innerHTML = '';
                     
-                    document.getElementById('layersList').innerHTML = layersHtml;
-                })
-                .catch(error => {
-                    console.error('Fehler beim Laden der Layer:', error);
-                    document.getElementById('layersList').innerHTML = '<div class="info-box">Fehler beim Laden</div>';
-                });
-        }
-        
-        function loadLayerData(layerName) {
-            fetch(\`/api/data/\${layerName}\`)
-                .then(response => response.json())
-                .then(data => {
-                    currentLayerData = data.data;
-                    
-                    // Update completed polygons count
-                    let completedCount = currentLayerData.filter(p => 
-                        p.bearbeitet && p.datum && p.farbe
-                    ).length;
-                    document.getElementById('completedPolygons').textContent = completedCount;
-                    
-                    showPolygonData();
-                })
-                .catch(error => {
-                    console.error('Fehler beim Laden der Layer-Daten:', error);
-                    document.getElementById('polygonData').innerHTML = '<div class="info-box">Fehler beim Laden der Daten</div>';
-                });
-        }
-        
-        function showTab(tab) {
-            currentTab = tab;
-            
-            // Update tab buttons
-            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-            document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
-            
-            showPolygonData();
-        }
-        
-        function showPolygonData() {
-            if (!currentLayerData) {
-                document.getElementById('polygonData').innerHTML = '<div class="info-box">Keine Daten geladen</div>';
-                return;
-            }
-            
-            let filteredData = currentLayerData;
-            
-            if (currentTab === 'completed') {
-                filteredData = currentLayerData.filter(p => p.bearbeitet && p.datum && p.farbe);
-            } else if (currentTab === 'pending') {
-                filteredData = currentLayerData.filter(p => !p.bearbeitet || !p.datum || !p.farbe);
-            }
-            
-            let html = \`<p>Zeige \${filteredData.length} von \${currentLayerData.length} Polygonen</p>\`;
-            
-            if (filteredData.length === 0) {
-                html += '<div class="info-box">Keine Polygone in dieser Kategorie</div>';
-            } else {
-                html += \`<table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Fläche (ha)</th>
-                            <th>Bearbeiter</th>
-                            <th>Datum</th>
-                            <th>Farbe</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>\`;
-                
-                filteredData.forEach(polygon => {
-                    let isCompleted = polygon.bearbeitet && polygon.datum && polygon.farbe;
-                    let statusIcon = isCompleted ? '✅' : '⏳';
-                    let colorIndicator = polygon.farbe ? 
-                        \`<span class="color-indicator" style="background-color: \${getColorStyle(polygon.farbe)}"></span>\${getColorName(polygon.farbe)}\` :
-                        '⚪ Nicht gesetzt';
-                    
-                    html += \`<tr class="polygon-row">
-                        <td>\${polygon.id || '-'}</td>
-                        <td>\${polygon.flaeche_ha ? polygon.flaeche_ha.toFixed(2) : '-'}</td>
-                        <td>\${polygon.bearbeitet || '-'}</td>
-                        <td>\${polygon.datum || '-'}</td>
-                        <td>\${colorIndicator}</td>
-                        <td>\${statusIcon} \${isCompleted ? 'Vollständig' : 'Unvollständig'}</td>
-                    </tr>\`;
-                });
-                
-                html += '</tbody></table>';
-            }
-            
-            document.getElementById('polygonData').innerHTML = html;
-        }
-        
-        function toggleStatus() {
-            fetch('/api/status')
-                .then(response => response.json())
-                .then(currentData => {
-                    const newStatus = !currentData.status;
-                    
-                    return fetch('/api/status', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            status: newStatus,
-                            timestamp: new Date().toISOString(),
-                            source: 'webinterface'
-                        })
+                    data.projects.forEach(project => {
+                        const card = document.createElement('div');
+                        card.className = 'project-card';
+                        card.onclick = () => showProject(project.name);
+                        
+                        card.innerHTML = \`
+                            <div class="project-name">\${project.name}</div>
+                            <div class="progress-container">
+                                <div class="progress-bar" style="width: \${project.completionPercentage}%">
+                                    <div class="progress-text">\${project.completionPercentage.toFixed(1)}%</div>
+                                </div>
+                            </div>
+                            <div class="project-stats">
+                                <div class="stat-item">
+                                    <div class="stat-number">\${project.completedPolygons}/\${project.totalPolygons}</div>
+                                    <div>Polygone</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-number">\${project.completedArea.toFixed(1)} ha</div>
+                                    <div>Bearbeitet</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-number">\${project.participantCount}</div>
+                                    <div>Beteiligte</div>
+                                </div>
+                            </div>
+                        \`;
+                        
+                        grid.appendChild(card);
                     });
                 })
-                .then(response => response.json())
-                .then(data => {
-                    loadStatus();
-                })
                 .catch(error => {
-                    console.error('Fehler beim Umschalten:', error);
+                    console.error('Fehler beim Laden der Projekte:', error);
+                    document.getElementById('projectGrid').innerHTML = 
+                        '<div style="text-align: center; color: white; font-size: 1.2em;">Fehler beim Laden der Projekte</div>';
                 });
         }
         
-        function loadAllData() {
-            loadStatus();
-            loadLayers();
+        function showProject(projectName) {
+            fetch(\`/api/project/\${projectName}\`)
+                .then(response => response.json())
+                .then(data => {
+                    currentProject = data;
+                    
+                    document.getElementById('dashboard').style.display = 'none';
+                    document.getElementById('projectDetail').style.display = 'block';
+                    document.getElementById('projectTitle').textContent = data.projectName;
+                    
+                    // Gesamt-Fortschrittsbalken erstellen
+                    const workerProgress = document.getElementById('workerProgress');
+                    workerProgress.innerHTML = '';
+                    
+                    Object.values(data.statistics.workerStats).forEach(worker => {
+                        const segment = document.createElement('div');
+                        segment.className = 'worker-segment';
+                        segment.style.backgroundColor = getColorStyle(worker.color);
+                        segment.style.width = \`\${worker.percentage}%\`;
+                        segment.textContent = worker.percentage > 5 ? \`\${worker.name} \${worker.percentage.toFixed(1)}%\` : '';
+                        workerProgress.appendChild(segment);
+                    });
+                    
+                    // Worker Tabs erstellen
+                    const tabsContainer = document.getElementById('workerTabs');
+                    tabsContainer.innerHTML = '';
+                    
+                    Object.values(data.statistics.workerStats).forEach((worker, index) => {
+                        const tab = document.createElement('button');
+                        tab.className = 'worker-tab' + (index === 0 ? ' active' : '');
+                        tab.style.backgroundColor = getColorStyle(worker.color);
+                        tab.textContent = worker.name;
+                        tab.onclick = () => showWorkerDetail(worker, tab);
+                        tabsContainer.appendChild(tab);
+                    });
+                    
+                    // Ersten Worker anzeigen
+                    if (Object.values(data.statistics.workerStats).length > 0) {
+                        showWorkerDetail(Object.values(data.statistics.workerStats)[0], tabsContainer.firstChild);
+                    }
+                    
+                    // Zusammenfassungsstatistiken
+                    updateSummaryStats(data.statistics);
+                })
+                .catch(error => {
+                    console.error('Fehler beim Laden des Projekts:', error);
+                });
+        }
+        
+        function showWorkerDetail(worker, tabElement) {
+            // Tab-Status aktualisieren
+            document.querySelectorAll('.worker-tab').forEach(tab => tab.classList.remove('active'));
+            tabElement.classList.add('active');
+            
+            const detailContainer = document.getElementById('workerDetail');
+            
+            let chronologyHtml = '';
+            if (worker.chronology.length > 0) {
+                chronologyHtml = \`
+                    <h4>Chronologie (neueste zuerst)</h4>
+                    <table class="chronology-table">
+                        <thead>
+                            <tr>
+                                <th>Datum</th>
+                                <th>Polygon ID</th>
+                                <th>Fläche (ha)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            \${worker.chronology.map(entry => \`
+                                <tr>
+                                    <td>\${entry.datum}</td>
+                                    <td>\${entry.id}</td>
+                                    <td>\${entry.area.toFixed(2)}</td>
+                                </tr>
+                            \`).join('')}
+                        </tbody>
+                    </table>
+                \`;
+            } else {
+                chronologyHtml = '<div style="text-align: center; color: #666; padding: 20px;">Keine Bearbeitungen von diesem Bearbeiter</div>';
+            }
+            
+            detailContainer.innerHTML = \`
+                <h3 style="color: \${getColorStyle(worker.color)};">\${worker.name}</h3>
+                <div style="margin-bottom: 20px;">
+                    <strong>Gesamtfläche:</strong> \${worker.area.toFixed(2)} ha (\${worker.percentage.toFixed(1)}% des Projekts)<br>
+                    <strong>Anzahl Polygone:</strong> \${worker.polygonCount}
+                </div>
+                \${chronologyHtml}
+            \`;
+        }
+        
+        function updateSummaryStats(stats) {
+            const container = document.getElementById('summaryStats');
+            container.innerHTML = \`
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.totalArea.toFixed(1)}</div>
+                    <div class="summary-label">Gesamtfläche (ha)</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.completedArea.toFixed(1)}</div>
+                    <div class="summary-label">Bearbeitete Fläche (ha)</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.completionAreaPercentage.toFixed(1)}%</div>
+                    <div class="summary-label">Flächenanteil abgeschlossen</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.completedPolygons}/\${stats.totalPolygons}</div>
+                    <div class="summary-label">Polygone abgeschlossen</div>
+                </div>
+            \`;
+        }
+        
+        function showDashboard() {
+            document.getElementById('projectDetail').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            currentProject = null;
         }
         
         // Initial laden
-        loadAllData();
+        loadProjects();
         
         // Auto-refresh alle 30 Sekunden
-        setInterval(loadAllData, 30000);
+        setInterval(() => {
+            if (currentProject) {
+                showProject(currentProject.projectName);
+            } else {
+                loadProjects();
+            }
+        }, 30000);
     </script>
 </body>
 </html>
@@ -639,6 +816,8 @@ app.listen(PORT, () => {
 📊 Webinterface: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
 🔗 API Status: /api/status
 🔄 API Sync: /api/sync
+📋 API Projekte: /api/projects
+🎯 API Projekt Details: /api/project/:projectName
   `);
   console.log(`Aktueller Status: ${serverStatus.status ? 'GRÜN' : 'ROT'}`);
 });
