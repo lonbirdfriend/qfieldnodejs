@@ -1179,15 +1179,15 @@ app.get('/', (req, res) => {
 
 // Server starten
 app.listen(PORT, () => {
-  console.log(\`
-🚀 Server läuft auf Port \${PORT}
-📊 Webinterface: \${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : \`http://localhost:\${PORT}\`}
+  console.log(`
+🚀 Server läuft auf Port ${PORT}
+📊 Webinterface: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
 🔗 API Status: /api/status
 🔄 API Sync: /api/sync
 📋 API Projekte: /api/projects
 🎯 API Projekt Details: /api/project/:projectName
-  \`);
-  console.log(\`Aktueller Status: \${serverStatus.status ? 'GRÜN' : 'ROT'}\`);
+  `);
+  console.log(`Aktueller Status: ${serverStatus.status ? 'GRÜN' : 'ROT'}`);
 });
 
 module.exports = app;
