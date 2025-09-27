@@ -1,7 +1,7 @@
 {
-  "name": "qfield-server-test",
-  "version": "1.0.0",
-  "description": "Test server für QField Plugin Verbindung",
+  "name": "qfield-server-sync",
+  "version": "2.0.0",
+  "description": "Synchronisations-Server für QField Plugin mit Polygon-Daten",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -18,8 +18,14 @@
     "qfield",
     "express",
     "api",
-    "gis"
+    "gis",
+    "sync",
+    "polygon",
+    "geospatial"
   ],
   "author": "Dein Name",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
 }
