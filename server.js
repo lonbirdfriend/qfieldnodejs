@@ -1,4 +1,4 @@
-// server.js - Erweiterte Version mit D3.js Dashboard
+// server.js - Erweiterte Version mit Projekt-Dashboard
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -18,112 +18,13 @@ let serverStatus = {
   source: 'server'
 };
 
-// Polygon data storage
+// Polygon data storage - erweitert mit Projektinformationen
 let polygonDatabase = {
-  projects: {},
+  projects: {},  // Struktur: { projectName: { data: [], info: { name, colorWorkers, workerPercentages } } }
   lastSync: null
 };
 
-// Hilfsfunktionen für erweiterte Datenaufbereitung
-function parseDateString(dateStr) {
-  if (!dateStr) return null;
-  
-  // Handle date ranges (e.g., "01.01.2025 bis 15.01.2025")
-  if (dateStr.includes(' bis ')) {
-    const [start, end] = dateStr.split(' bis ').map(d => d.trim());
-    return {
-      type: 'range',
-      start: parseSimpleDate(start),
-      end: parseSimpleDate(end),
-      display: dateStr
-    };
-  }
-  
-  // Handle single dates
-  return {
-    type: 'single',
-    date: parseSimpleDate(dateStr),
-    display: dateStr
-  };
-}
-
-function parseSimpleDate(dateStr) {
-  if (!dateStr) return null;
-  const parts = dateStr.split('.');
-  if (parts.length === 3) {
-    return new Date(parts[2], parts[1] - 1, parts[0]); // DD.MM.YYYY -> Date
-  }
-  return null;
-}
-
-function aggregateDataByDate(projectData) {
-  const dailyData = {};
-  
-  if (!projectData || !projectData.data) return [];
-  
-  projectData.data.forEach(polygon => {
-    if (!polygon.datum || !polygon.bearbeitet || !polygon.farbe) return;
-    
-    const dateInfo = parseDateString(polygon.datum);
-    if (!dateInfo) return;
-    
-    const area = parseFloat(polygon.flaeche_ha) || 0;
-    const workerColor = polygon.farbe;
-    const workerName = projectData.info?.colorWorkers?.[workerColor] || `Worker ${workerColor}`;
-    
-    if (dateInfo.type === 'single' && dateInfo.date) {
-      const dateKey = dateInfo.date.toISOString().split('T')[0];
-      if (!dailyData[dateKey]) {
-        dailyData[dateKey] = {
-          date: dateInfo.date,
-          dateStr: dateInfo.display,
-          totalArea: 0,
-          workers: {}
-        };
-      }
-      
-      dailyData[dateKey].totalArea += area;
-      if (!dailyData[dateKey].workers[workerColor]) {
-        dailyData[dateKey].workers[workerColor] = {
-          name: workerName,
-          color: workerColor,
-          area: 0
-        };
-      }
-      dailyData[dateKey].workers[workerColor].area += area;
-      
-    } else if (dateInfo.type === 'range' && dateInfo.start && dateInfo.end) {
-      // Für Datumsbereiche: Fläche gleichmäßig auf alle Tage verteilen
-      const daysDiff = Math.ceil((dateInfo.end - dateInfo.start) / (1000 * 60 * 60 * 24)) + 1;
-      const areaPerDay = area / daysDiff;
-      
-      for (let d = new Date(dateInfo.start); d <= dateInfo.end; d.setDate(d.getDate() + 1)) {
-        const dateKey = d.toISOString().split('T')[0];
-        if (!dailyData[dateKey]) {
-          dailyData[dateKey] = {
-            date: new Date(d),
-            dateStr: d.toLocaleDateString('de-DE'),
-            totalArea: 0,
-            workers: {}
-          };
-        }
-        
-        dailyData[dateKey].totalArea += areaPerDay;
-        if (!dailyData[dateKey].workers[workerColor]) {
-          dailyData[dateKey].workers[workerColor] = {
-            name: workerName,
-            color: workerColor,
-            area: 0
-          };
-        }
-        dailyData[dateKey].workers[workerColor].area += areaPerDay;
-      }
-    }
-  });
-  
-  return Object.values(dailyData).sort((a, b) => a.date - b.date);
-}
-
+// Hilfsfunktionen für Statistiken
 function calculateProjectStatistics(projectData) {
   if (!projectData || !projectData.data) {
     return {
@@ -133,8 +34,7 @@ function calculateProjectStatistics(projectData) {
       totalArea: 0,
       completedArea: 0,
       workerStats: {},
-      participantCount: 0,
-      dailyData: []
+      participantCount: 0
     };
   }
 
@@ -161,13 +61,21 @@ function calculateProjectStatistics(projectData) {
         area: workerArea,
         polygonCount: workerPolygons.length,
         percentage: totalArea > 0 ? (workerArea / totalArea * 100) : 0,
-        targetPercentage: info.workerPercentages ? info.workerPercentages[colorCode] || 0 : 0
+        chronology: workerPolygons
+          .map(p => ({
+            datum: p.datum,
+            area: parseFloat(p.flaeche_ha) || 0,
+            id: p.id
+          }))
+          .sort((a, b) => {
+            // Sortierung nach Datum (DD.MM.YYYY)
+            const dateA = a.datum.split('.').reverse().join('-');
+            const dateB = b.datum.split('.').reverse().join('-');
+            return new Date(dateB) - new Date(dateA);
+          })
       };
     }
   });
-
-  // Tägliche Daten aggregieren
-  const dailyData = aggregateDataByDate(projectData);
 
   return {
     totalPolygons,
@@ -177,13 +85,13 @@ function calculateProjectStatistics(projectData) {
     completedArea,
     completionAreaPercentage: totalArea > 0 ? (completedArea / totalArea * 100) : 0,
     workerStats,
-    participantCount: Object.keys(workerStats).length,
-    dailyData
+    participantCount: Object.keys(workerStats).length
   };
 }
 
-// Existing API routes...
+// API Routes
 app.get('/api/status', (req, res) => {
+  console.log('GET /api/status - Current status:', serverStatus.status ? 'GRÜN' : 'ROT');
   res.json(serverStatus);
 });
 
@@ -200,6 +108,8 @@ app.post('/api/status', (req, res) => {
     source: source || 'unknown'
   };
   
+  console.log(`POST /api/status - Status geändert zu: ${status ? 'GRÜN' : 'ROT'} (von ${source || 'unknown'})`);
+  
   res.json({
     success: true,
     status: serverStatus.status,
@@ -207,8 +117,11 @@ app.post('/api/status', (req, res) => {
   });
 });
 
+// Erweiterte Synchronisation mit Projektinformationen
 app.post('/api/sync', (req, res) => {
   const { action, layerName, data, timestamp, source, projectInfo } = req.body;
+  
+  console.log(`POST /api/sync - Layer: ${layerName}, Action: ${action}, Polygons: ${data ? data.length : 0}`);
   
   if (!layerName || !data || !Array.isArray(data)) {
     return res.status(400).json({ error: 'LayerName and data array required' });
@@ -217,13 +130,16 @@ app.post('/api/sync', (req, res) => {
   try {
     const projectName = projectInfo?.projectName || layerName;
     
+    // Initialisiere Projekt falls es nicht existiert
     if (!polygonDatabase.projects[projectName]) {
       polygonDatabase.projects[projectName] = {
         data: [],
         info: projectInfo || {}
       };
+      console.log(`Neues Projekt '${projectName}' erstellt`);
     }
     
+    // Aktualisiere Projektinformationen
     if (projectInfo) {
       polygonDatabase.projects[projectName].info = {
         ...polygonDatabase.projects[projectName].info,
@@ -236,17 +152,22 @@ app.post('/api/sync', (req, res) => {
     let newCount = 0;
     let updatedCount = 0;
     
+    // Erstelle Map für schnellen Zugriff auf existierende Daten
     let existingMap = {};
     existingData.forEach(item => {
-      if (item.id) existingMap[item.id] = item;
+      if (item.id) {
+        existingMap[item.id] = item;
+      }
     });
     
+    // Verarbeite eingehende Daten
     data.forEach(incomingPolygon => {
       if (!incomingPolygon.id) return;
       
       let existingPolygon = existingMap[incomingPolygon.id];
       
       if (existingPolygon) {
+        // Merge: Fülle leere Felder mit vorhandenen Daten
         let merged = {
           id: incomingPolygon.id,
           flaeche_ha: incomingPolygon.flaeche_ha || existingPolygon.flaeche_ha || 0,
@@ -258,12 +179,14 @@ app.post('/api/sync', (req, res) => {
           source: source || 'unknown'
         };
         
+        // Prüfe ob sich etwas geändert hat
         if (JSON.stringify(merged) !== JSON.stringify(existingPolygon)) {
           updatedCount++;
         }
         
         mergedData.push(merged);
       } else {
+        // Neues Polygon
         mergedData.push({
           id: incomingPolygon.id,
           flaeche_ha: incomingPolygon.flaeche_ha || 0,
@@ -278,6 +201,7 @@ app.post('/api/sync', (req, res) => {
       }
     });
     
+    // Füge bestehende Polygone hinzu, die nicht in den neuen Daten waren
     existingData.forEach(existing => {
       let found = data.find(incoming => incoming.id === existing.id);
       if (!found) {
@@ -285,8 +209,11 @@ app.post('/api/sync', (req, res) => {
       }
     });
     
+    // Aktualisiere das Projekt
     polygonDatabase.projects[projectName].data = mergedData;
     polygonDatabase.lastSync = new Date().toISOString();
+    
+    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${mergedData.length}`);
     
     res.json({
       success: true,
@@ -306,6 +233,7 @@ app.post('/api/sync', (req, res) => {
   }
 });
 
+// Projekt-Übersicht für Dashboard
 app.get('/api/projects', (req, res) => {
   const projects = Object.keys(polygonDatabase.projects).map(projectName => {
     const projectData = polygonDatabase.projects[projectName];
@@ -326,6 +254,7 @@ app.get('/api/projects', (req, res) => {
   });
 });
 
+// Detaillierte Projekt-Daten
 app.get('/api/project/:projectName', (req, res) => {
   const { projectName } = req.params;
   
@@ -345,7 +274,38 @@ app.get('/api/project/:projectName', (req, res) => {
   });
 });
 
-// D3.js Dashboard Route
+// Legacy Endpoints für Rückwärtskompatibilität
+app.get('/api/data/:layerName', (req, res) => {
+  const { layerName } = req.params;
+  
+  if (!polygonDatabase.projects[layerName]) {
+    return res.status(404).json({ error: 'Layer nicht gefunden' });
+  }
+  
+  res.json({
+    layerName: layerName,
+    data: polygonDatabase.projects[layerName].data,
+    lastSync: polygonDatabase.lastSync,
+    count: polygonDatabase.projects[layerName].data.length
+  });
+});
+
+app.get('/api/layers', (req, res) => {
+  const layers = Object.keys(polygonDatabase.projects).map(projectName => ({
+    name: projectName,
+    polygonCount: polygonDatabase.projects[projectName].data.length,
+    lastUpdate: polygonDatabase.projects[projectName].data.length > 0 ? 
+      Math.max(...polygonDatabase.projects[projectName].data.map(p => new Date(p.lastUpdate || 0))) : null
+  }));
+  
+  res.json({
+    layers: layers,
+    totalLayers: layers.length,
+    lastSync: polygonDatabase.lastSync
+  });
+});
+
+// Haupt-Dashboard Route
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -353,8 +313,7 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QField Analytics Dashboard</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <title>QField Projekt Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -367,7 +326,6 @@ app.get('/', (req, res) => {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
-            color: #333;
         }
         
         .container {
@@ -384,174 +342,283 @@ app.get('/', (req, res) => {
             margin-bottom: 30px;
         }
         
-        .project-selector {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            margin-bottom: 30px;
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
         }
         
         .project-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 15px;
-        }
-        
-        .project-card {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 15px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: 2px solid transparent;
-        }
-        
-        .project-card:hover {
-            border-color: #667eea;
-            transform: translateY(-2px);
-        }
-        
-        .project-card.active {
-            border-color: #667eea;
-            background: #e3f2fd;
-        }
-        
-        .charts-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
             margin-bottom: 30px;
         }
         
-        .chart-panel {
+        .project-card {
             background: white;
             border-radius: 15px;
             padding: 25px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 3px solid transparent;
         }
         
-        .chart-title {
-            font-size: 1.2em;
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+            border-color: #667eea;
+        }
+        
+        .project-name {
+            font-size: 1.4em;
             font-weight: bold;
-            margin-bottom: 20px;
             color: #333;
-            text-align: center;
+            margin-bottom: 15px;
         }
         
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
+        .progress-container {
+            background: #f0f0f0;
+            border-radius: 10px;
+            height: 25px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            position: relative;
         }
         
-        .stat-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            border-radius: 10px;
+            transition: width 0.8s ease;
+            position: relative;
+        }
+        
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            font-size: 0.9em;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+        
+        .project-stats {
+            display: flex;
+            justify-content: space-between;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .stat-item {
             text-align: center;
         }
         
         .stat-number {
-            font-size: 2.5em;
+            font-size: 1.2em;
             font-weight: bold;
-            color: #667eea;
-            margin-bottom: 10px;
+            color: #333;
         }
         
-        .stat-label {
-            color: #666;
-            font-size: 1.1em;
+        .back-button {
+            background: linear-gradient(45deg, #2196F3, #1976D2);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            font-size: 1em;
+            border-radius: 25px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
         }
         
-        .worker-legend {
+        .back-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 7px 20px rgba(33, 150, 243, 0.4);
+        }
+        
+        .project-detail {
+            display: none;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .overall-progress {
+            margin-bottom: 30px;
+        }
+        
+        .worker-progress {
             display: flex;
+            height: 40px;
+            border-radius: 20px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .worker-segment {
+            transition: all 0.3s ease;
+            position: relative;
+            display: flex;
+            align-items: center;
             justify-content: center;
-            gap: 20px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+        
+        .worker-tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+        }
+        
+        .worker-tab {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            color: white;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+        
+        .worker-tab.active {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .worker-detail {
+            background: #f9f9f9;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .chronology-table {
+            width: 100%;
+            border-collapse: collapse;
             margin-top: 15px;
         }
         
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        .chronology-table th,
+        .chronology-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
         }
         
-        .legend-color {
-            width: 20px;
-            height: 20px;
-            border-radius: 3px;
+        .chronology-table th {
+            background-color: #f5f5f5;
+            font-weight: bold;
         }
         
-        .tooltip {
-            position: absolute;
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.3s;
+        .chronology-table tr:hover {
+            background-color: #f0f0f0;
         }
         
-        @media (max-width: 768px) {
-            .charts-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .summary-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .summary-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        
+        .summary-label {
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .hidden {
+            display: none;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>📊 QField Analytics Dashboard</h1>
-            <p>Fortschrittsanalyse und Statistiken</p>
-        </div>
-        
-        <div class="project-selector">
-            <h2>Projekte</h2>
+        <!-- Dashboard Übersicht -->
+        <div id="dashboard">
+            <div class="header">
+                <h1>🏗️ QField Projekt Dashboard</h1>
+                <p>Übersicht aller Projekte und deren Fortschritt</p>
+            </div>
+            
             <div id="projectGrid" class="project-grid">
-                <!-- Projekte werden hier geladen -->
+                <!-- Projekte werden hier dynamisch geladen -->
             </div>
         </div>
         
-        <div id="dashboardContent" style="display: none;">
-            <div class="charts-container">
-                <div class="chart-panel">
-                    <div class="chart-title">Täglicher Fortschritt (Hektar)</div>
-                    <div id="timelineChart"></div>
-                </div>
-                
-                <div class="chart-panel">
-                    <div class="chart-title">Bearbeiter-Leistung vs. Soll</div>
-                    <div id="workerChart"></div>
+        <!-- Projekt Detail Ansicht -->
+        <div id="projectDetail" class="project-detail">
+            <button class="back-button" onclick="showDashboard()">← Zurück zur Übersicht</button>
+            
+            <h2 id="projectTitle">Projekt Details</h2>
+            
+            <div class="overall-progress">
+                <h3>Gesamtfortschritt nach Bearbeitern</h3>
+                <div id="workerProgress" class="worker-progress">
+                    <!-- Worker-Segmente werden hier eingefügt -->
                 </div>
             </div>
             
-            <div class="stats-grid" id="statsGrid">
-                <!-- Statistiken werden hier geladen -->
+            <div id="workerTabs" class="worker-tabs">
+                <!-- Tabs werden hier eingefügt -->
+            </div>
+            
+            <div id="workerDetail" class="worker-detail">
+                <!-- Details werden hier angezeigt -->
+            </div>
+            
+            <div class="summary-stats" id="summaryStats">
+                <!-- Zusammenfassung wird hier angezeigt -->
             </div>
         </div>
     </div>
-    
-    <div class="tooltip" id="tooltip"></div>
 
     <script>
         let currentProject = null;
-        let currentData = null;
+        let currentWorker = null;
         
-        const colorMap = {
-            'r': '#f44336',
-            'g': '#4CAF50', 
-            'b': '#2196F3',
-            'y': '#FFEB3B'
-        };
+        function getColorStyle(colorCode) {
+            switch(colorCode) {
+                case 'r': return '#f44336';
+                case 'g': return '#4CAF50';
+                case 'b': return '#2196F3';
+                case 'y': return '#FFEB3B';
+                default: return '#e0e0e0';
+            }
+        }
+        
+        function getColorName(colorCode) {
+            switch(colorCode) {
+                case 'r': return 'Rot';
+                case 'g': return 'Grün';
+                case 'b': return 'Blau';
+                case 'y': return 'Gelb';
+                default: return 'Unbekannt';
+            }
+        }
         
         function loadProjects() {
             fetch('/api/projects')
@@ -560,7 +627,7 @@ app.get('/', (req, res) => {
                     const grid = document.getElementById('projectGrid');
                     
                     if (data.projects.length === 0) {
-                        grid.innerHTML = '<div style="text-align: center; color: #666;">Keine Projekte gefunden</div>';
+                        grid.innerHTML = '<div style="text-align: center; color: white; font-size: 1.2em;">Keine Projekte gefunden</div>';
                         return;
                     }
                     
@@ -569,243 +636,190 @@ app.get('/', (req, res) => {
                     data.projects.forEach(project => {
                         const card = document.createElement('div');
                         card.className = 'project-card';
-                        card.onclick = () => selectProject(project.name, card);
+                        card.onclick = () => showProject(project.name);
                         
                         card.innerHTML = \`
-                            <div style="font-weight: bold; margin-bottom: 10px;">\${project.name}</div>
-                            <div style="color: #666; font-size: 0.9em;">
-                                \${project.completedArea.toFixed(1)} / \${project.totalArea.toFixed(1)} ha
-                                (\${project.completionAreaPercentage.toFixed(1)}%)
+                            <div class="project-name">\${project.name}</div>
+                            <div class="progress-container">
+                                <div class="progress-bar" style="width: \${project.completionPercentage}%">
+                                    <div class="progress-text">\${project.completionPercentage.toFixed(1)}%</div>
+                                </div>
+                            </div>
+                            <div class="project-stats">
+                                <div class="stat-item">
+                                    <div class="stat-number">\${project.completedPolygons}/\${project.totalPolygons}</div>
+                                    <div>Polygone</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-number">\${project.completedArea.toFixed(1)} ha</div>
+                                    <div>Bearbeitet</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-number">\${project.participantCount}</div>
+                                    <div>Beteiligte</div>
+                                </div>
                             </div>
                         \`;
                         
                         grid.appendChild(card);
                     });
                 })
-                .catch(error => console.error('Fehler beim Laden der Projekte:', error));
+                .catch(error => {
+                    console.error('Fehler beim Laden der Projekte:', error);
+                    document.getElementById('projectGrid').innerHTML = 
+                        '<div style="text-align: center; color: white; font-size: 1.2em;">Fehler beim Laden der Projekte</div>';
+                });
         }
         
-        function selectProject(projectName, cardElement) {
-            // Update active card
-            document.querySelectorAll('.project-card').forEach(card => card.classList.remove('active'));
-            cardElement.classList.add('active');
-            
+        function showProject(projectName) {
             fetch(\`/api/project/\${projectName}\`)
                 .then(response => response.json())
                 .then(data => {
-                    currentProject = projectName;
-                    currentData = data;
+                    currentProject = data;
                     
-                    document.getElementById('dashboardContent').style.display = 'block';
+                    document.getElementById('dashboard').style.display = 'none';
+                    document.getElementById('projectDetail').style.display = 'block';
+                    document.getElementById('projectTitle').textContent = data.projectName;
                     
-                    createTimelineChart(data.statistics.dailyData);
-                    createWorkerChart(data.statistics.workerStats);
-                    createStatsGrid(data.statistics);
+                    // Gesamt-Fortschrittsbalken erstellen
+                    const workerProgress = document.getElementById('workerProgress');
+                    workerProgress.innerHTML = '';
+                    
+                    Object.values(data.statistics.workerStats).forEach(worker => {
+                        const segment = document.createElement('div');
+                        segment.className = 'worker-segment';
+                        segment.style.backgroundColor = getColorStyle(worker.color);
+                        segment.style.width = \`\${worker.percentage}%\`;
+                        segment.textContent = worker.percentage > 5 ? \`\${worker.name} \${worker.percentage.toFixed(1)}%\` : '';
+                        workerProgress.appendChild(segment);
+                    });
+                    
+                    // Worker Tabs erstellen
+                    const tabsContainer = document.getElementById('workerTabs');
+                    tabsContainer.innerHTML = '';
+                    
+                    Object.values(data.statistics.workerStats).forEach((worker, index) => {
+                        const tab = document.createElement('button');
+                        tab.className = 'worker-tab' + (index === 0 ? ' active' : '');
+                        tab.style.backgroundColor = getColorStyle(worker.color);
+                        tab.textContent = worker.name;
+                        tab.onclick = () => showWorkerDetail(worker, tab);
+                        tabsContainer.appendChild(tab);
+                    });
+                    
+                    // Ersten Worker anzeigen
+                    if (Object.values(data.statistics.workerStats).length > 0) {
+                        showWorkerDetail(Object.values(data.statistics.workerStats)[0], tabsContainer.firstChild);
+                    }
+                    
+                    // Zusammenfassungsstatistiken
+                    updateSummaryStats(data.statistics);
                 })
-                .catch(error => console.error('Fehler beim Laden des Projekts:', error));
-        }
-        
-        function createTimelineChart(dailyData) {
-            const container = document.getElementById('timelineChart');
-            container.innerHTML = '';
-            
-            if (!dailyData || dailyData.length === 0) {
-                container.innerHTML = '<div style="text-align: center; color: #666; padding: 40px;">Keine Daten verfügbar</div>';
-                return;
-            }
-            
-            const margin = {top: 20, right: 30, bottom: 70, left: 60};
-            const width = container.offsetWidth - margin.left - margin.right;
-            const height = 300 - margin.top - margin.bottom;
-            
-            const svg = d3.select(container)
-                .append('svg')
-                .attr('width', width + margin.left + margin.right)
-                .attr('height', height + margin.top + margin.bottom);
-            
-            const g = svg.append('g')
-                .attr('transform', \`translate(\${margin.left},\${margin.top})\`);
-            
-            // Scales
-            const x = d3.scaleBand()
-                .domain(dailyData.map(d => d.dateStr))
-                .range([0, width])
-                .padding(0.2);
-            
-            const y = d3.scaleLinear()
-                .domain([0, d3.max(dailyData, d => d.totalArea)])
-                .range([height, 0]);
-            
-            // Axes
-            g.append('g')
-                .attr('transform', \`translate(0,\${height})\`)
-                .call(d3.axisBottom(x))
-                .selectAll('text')
-                .style('text-anchor', 'end')
-                .attr('dx', '-.8em')
-                .attr('dy', '.15em')
-                .attr('transform', 'rotate(-45)');
-            
-            g.append('g')
-                .call(d3.axisLeft(y));
-            
-            // Y-axis label
-            g.append('text')
-                .attr('transform', 'rotate(-90)')
-                .attr('y', 0 - margin.left)
-                .attr('x', 0 - (height / 2))
-                .attr('dy', '1em')
-                .style('text-anchor', 'middle')
-                .text('Hektar');
-            
-            // Bars
-            const tooltip = d3.select('#tooltip');
-            
-            g.selectAll('.bar')
-                .data(dailyData)
-                .enter().append('rect')
-                .attr('class', 'bar')
-                .attr('x', d => x(d.dateStr))
-                .attr('width', x.bandwidth())
-                .attr('y', d => y(d.totalArea))
-                .attr('height', d => height - y(d.totalArea))
-                .attr('fill', '#667eea')
-                .on('mouseover', function(event, d) {
-                    tooltip.style('opacity', 1)
-                        .html(\`
-                            <strong>\${d.dateStr}</strong><br>
-                            Gesamt: \${d.totalArea.toFixed(2)} ha<br>
-                            \${Object.values(d.workers).map(w => 
-                                \`\${w.name}: \${w.area.toFixed(2)} ha\`
-                            ).join('<br>')}
-                        \`)
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 10) + 'px');
-                })
-                .on('mouseout', function() {
-                    tooltip.style('opacity', 0);
+                .catch(error => {
+                    console.error('Fehler beim Laden des Projekts:', error);
                 });
         }
         
-        function createWorkerChart(workerStats) {
-            const container = document.getElementById('workerChart');
-            container.innerHTML = '';
+        function showWorkerDetail(worker, tabElement) {
+            // Tab-Status aktualisieren
+            document.querySelectorAll('.worker-tab').forEach(tab => tab.classList.remove('active'));
+            tabElement.classList.add('active');
             
-            const workers = Object.values(workerStats);
-            if (workers.length === 0) {
-                container.innerHTML = '<div style="text-align: center; color: #666; padding: 40px;">Keine Bearbeiterdaten verfügbar</div>';
-                return;
+            const detailContainer = document.getElementById('workerDetail');
+            
+            let chronologyHtml = '';
+            if (worker.chronology.length > 0) {
+                chronologyHtml = \`
+                    <h4>Chronologie (neueste zuerst)</h4>
+                    <table class="chronology-table">
+                        <thead>
+                            <tr>
+                                <th>Datum</th>
+                                <th>Polygon ID</th>
+                                <th>Fläche (ha)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            \${worker.chronology.map(entry => \`
+                                <tr>
+                                    <td>\${entry.datum}</td>
+                                    <td>\${entry.id}</td>
+                                    <td>\${entry.area.toFixed(2)}</td>
+                                </tr>
+                            \`).join('')}
+                        </tbody>
+                    </table>
+                \`;
+            } else {
+                chronologyHtml = '<div style="text-align: center; color: #666; padding: 20px;">Keine Bearbeitungen von diesem Bearbeiter</div>';
             }
             
-            const margin = {top: 20, right: 30, bottom: 50, left: 60};
-            const width = container.offsetWidth - margin.left - margin.right;
-            const height = 300 - margin.top - margin.bottom;
-            
-            const svg = d3.select(container)
-                .append('svg')
-                .attr('width', width + margin.left + margin.right)
-                .attr('height', height + margin.top + margin.bottom);
-            
-            const g = svg.append('g')
-                .attr('transform', \`translate(\${margin.left},\${margin.top})\`);
-            
-            // Scales
-            const x = d3.scaleBand()
-                .domain(workers.map(d => d.name))
-                .range([0, width])
-                .padding(0.3);
-            
-            const y = d3.scaleLinear()
-                .domain([0, Math.max(
-                    d3.max(workers, d => d.percentage),
-                    d3.max(workers, d => d.targetPercentage)
-                )])
-                .range([height, 0]);
-            
-            // Axes
-            g.append('g')
-                .attr('transform', \`translate(0,\${height})\`)
-                .call(d3.axisBottom(x));
-            
-            g.append('g')
-                .call(d3.axisLeft(y));
-            
-            // Y-axis label
-            g.append('text')
-                .attr('transform', 'rotate(-90)')
-                .attr('y', 0 - margin.left)
-                .attr('x', 0 - (height / 2))
-                .attr('dy', '1em')
-                .style('text-anchor', 'middle')
-                .text('Prozent');
-            
-            const tooltip = d3.select('#tooltip');
-            
-            // Target bars (background)
-            g.selectAll('.target-bar')
-                .data(workers)
-                .enter().append('rect')
-                .attr('class', 'target-bar')
-                .attr('x', d => x(d.name))
-                .attr('width', x.bandwidth())
-                .attr('y', d => y(d.targetPercentage))
-                .attr('height', d => height - y(d.targetPercentage))
-                .attr('fill', d => colorMap[d.color])
-                .attr('opacity', 0.3);
-            
-            // Actual bars
-            g.selectAll('.actual-bar')
-                .data(workers)
-                .enter().append('rect')
-                .attr('class', 'actual-bar')
-                .attr('x', d => x(d.name))
-                .attr('width', x.bandwidth())
-                .attr('y', d => y(d.percentage))
-                .attr('height', d => height - y(d.percentage))
-                .attr('fill', d => colorMap[d.color])
-                .on('mouseover', function(event, d) {
-                    tooltip.style('opacity', 1)
-                        .html(\`
-                            <strong>\${d.name}</strong><br>
-                            Erreicht: \${d.percentage.toFixed(1)}%<br>
-                            Soll: \${d.targetPercentage.toFixed(1)}%<br>
-                            Fläche: \${d.area.toFixed(2)} ha
-                        \`)
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 10) + 'px');
-                })
-                .on('mouseout', function() {
-                    tooltip.style('opacity', 0);
-                });
-            
-            // Legend
-            const legend = d3.select(container)
-                .append('div')
-                .attr('class', 'worker-legend');
-            
-            legend.append('div')
-                .attr('class', 'legend-item')
-                .html('<div class="legend-color" style="background: rgba(102, 126, 234, 0.3);"></div><span>Soll</span>');
-            
-            legend.append('div')
-                .attr('class', 'legend-item')
-                .html('<div class="legend-color" style="background: #667eea;"></div><span>Erreicht</span>');
+            detailContainer.innerHTML = \`
+                <h3 style="color: \${getColorStyle(worker.color)};">\${worker.name}</h3>
+                <div style="margin-bottom: 20px;">
+                    <strong>Gesamtfläche:</strong> \${worker.area.toFixed(2)} ha (\${worker.percentage.toFixed(1)}% des Projekts)<br>
+                    <strong>Anzahl Polygone:</strong> \${worker.polygonCount}
+                </div>
+                \${chronologyHtml}
+            \`;
         }
         
-        function createStatsGrid(stats) {
-            const container = document.getElementById('statsGrid');
+        function updateSummaryStats(stats) {
+            const container = document.getElementById('summaryStats');
             container.innerHTML = \`
-                <div class="stat-card">
-                    <div class="stat-number">\${stats.totalArea.toFixed(1)}</div>
-                    <div class="stat-label">Gesamtfläche (ha)</div>
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.totalArea.toFixed(1)}</div>
+                    <div class="summary-label">Gesamtfläche (ha)</div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-number">\${stats.completedArea.toFixed(1)}</div>
-                    <div class="stat-label">Bearbeitet (ha)</div>
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.completedArea.toFixed(1)}</div>
+                    <div class="summary-label">Bearbeitete Fläche (ha)</div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-number">\${stats.completionAreaPercentage.toFixed(1)}%</div>
-                    <div class="stat-label">Fortschritt</div>
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.completionAreaPercentage.toFixed(1)}%</div>
+                    <div class="summary-label">Flächenanteil abgeschlossen</div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-number">\${stats.dailyData.length}</div
+                <div class="summary-card">
+                    <div class="summary-number">\${stats.completedPolygons}/\${stats.totalPolygons}</div>
+                    <div class="summary-label">Polygone abgeschlossen</div>
+                </div>
+            \`;
+        }
+        
+        function showDashboard() {
+            document.getElementById('projectDetail').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            currentProject = null;
+        }
+        
+        // Initial laden
+        loadProjects();
+        
+        // Auto-refresh alle 30 Sekunden
+        setInterval(() => {
+            if (currentProject) {
+                showProject(currentProject.projectName);
+            } else {
+                loadProjects();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
+  `);
+});
+
+// Server starten
+app.listen(PORT, () => {
+  console.log(`
+🚀 Server läuft auf Port ${PORT}
+📊 Webinterface: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
+🔗 API Status: /api/status
+🔄 API Sync: /api/sync
+📋 API Projekte: /api/projects
+🎯 API Projekt Details: /api/project/:projectName
+  `);
+  console.log(`Aktueller Status: ${serverStatus.status ? 'GRÜN' : 'ROT'}`);
+});
+
+module.exports = app;
