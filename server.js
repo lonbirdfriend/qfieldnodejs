@@ -41,11 +41,21 @@ function calculateProjectStatistics(projectData) {
   const data = projectData.data;
   const info = projectData.info || {};
   
+  console.log('calculateProjectStatistics called for project:', info);
+  console.log('Sample data entries:', data.slice(0, 3));
+  
   let totalPolygons = data.length;
   let completedPolygons = data.filter(p => p.bearbeitet && p.datum && p.farbe).length;
-  let totalArea = data.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+  let totalArea = data.reduce((sum, p) => {
+    const flaeche = parseFloat(p.flaeche_ha) || 0;
+    console.log(`Total area calc - Polygon ${p.id}: flaeche_ha = ${p.flaeche_ha}, parsed = ${flaeche}`);
+    return sum + flaeche;
+  }, 0);
   let completedArea = data.filter(p => p.bearbeitet && p.datum && p.farbe)
-    .reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+    .reduce((sum, p) => {
+      const flaeche = parseFloat(p.flaeche_ha) || 0;
+      return sum + flaeche;
+    }, 0);
   
   // Worker-Statistiken nach Farbe gruppiert
   let workerStats = {};
@@ -53,7 +63,11 @@ function calculateProjectStatistics(projectData) {
     if (info.colorWorkers && info.colorWorkers[colorCode]) {
       const workerName = info.colorWorkers[colorCode];
       const workerPolygons = data.filter(p => p.farbe === colorCode && p.bearbeitet && p.datum);
-      const workerArea = workerPolygons.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+      const workerArea = workerPolygons.reduce((sum, p) => {
+        const flaeche = parseFloat(p.flaeche_ha) || 0;
+        console.log(`Worker ${workerName} area calc - Polygon ${p.id}: flaeche_ha = ${p.flaeche_ha}, parsed = ${flaeche}`);
+        return sum + flaeche;
+      }, 0);
       
       // Chronologie nach Datum gruppieren
       const dateGroups = {};
@@ -67,7 +81,10 @@ function calculateProjectStatistics(projectData) {
             polygonIds: []
           };
         }
-        dateGroups[datum].area += parseFloat(p.flaeche_ha) || 0;
+        // Explizit das flaeche_ha Attribut verwenden
+        const flaeche = parseFloat(p.flaeche_ha) || 0;
+        console.log(`Worker ${workerName}, Polygon ${p.id}, Datum ${datum}, Fläche: ${flaeche}`);
+        dateGroups[datum].area += flaeche;
         dateGroups[datum].polygonCount += 1;
         dateGroups[datum].polygonIds.push(p.id);
       });
