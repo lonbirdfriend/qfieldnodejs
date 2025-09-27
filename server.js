@@ -429,7 +429,7 @@ app.get('/', (req, res) => {
                 .attr("width", width + margin.left + margin.right)
                 .attr("height", height + margin.top + margin.bottom)
                 .append("g")
-                .attr("transform", \`translate(\${margin.left},\${margin.top})\`);
+                .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
             
             // Parse dates and prepare data
             const parseDate = d3.timeParse("%d.%m.%Y");
@@ -465,7 +465,7 @@ app.get('/', (req, res) => {
             // Add grid
             svg.append("g")
                 .attr("class", "grid")
-                .attr("transform", \`translate(0,\${height})\`)
+                .attr("transform", "translate(0," + height + ")")
                 .call(d3.axisBottom(xScale)
                     .tickSize(-height)
                     .tickFormat("")
@@ -494,7 +494,7 @@ app.get('/', (req, res) => {
             // Add axes
             svg.append("g")
                 .attr("class", "axis")
-                .attr("transform", \`translate(0,\${height})\`)
+                .attr("transform", "translate(0," + height + ")")
                 .call(d3.axisBottom(xScale).tickFormat(d3.timeFormat("%d.%m")));
             
             svg.append("g")
@@ -512,7 +512,7 @@ app.get('/', (req, res) => {
                 .text("Fläche (ha)");
                 
             svg.append("text")
-                .attr("transform", \`translate(\${width / 2}, \${height + margin.bottom - 10})\`)
+                .attr("transform", "translate(" + (width / 2) + ", " + (height + margin.bottom - 10) + ")")
                 .style("text-anchor", "middle")
                 .style("font-size", "12px")
                 .text("Datum");
@@ -542,7 +542,7 @@ app.get('/', (req, res) => {
                 .attr("width", width + margin.left + margin.right)
                 .attr("height", height + margin.top + margin.bottom)
                 .append("g")
-                .attr("transform", \`translate(\${margin.left},\${margin.top})\`);
+                .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
             
             // Scales
             const xScale = d3.scaleBand()
@@ -576,7 +576,7 @@ app.get('/', (req, res) => {
                 .on("mouseover", function(event, d) {
                     const tooltip = d3.select("#tooltip");
                     tooltip.transition().duration(200).style("opacity", .9);
-                    tooltip.html(\`<strong>\${d.name}</strong><br/>Fläche: \${d.area.toFixed(2)} ha<br/>Anteil: \${d.percentage.toFixed(1)}%\`)
+                    tooltip.html("<strong>" + d.name + "</strong><br/>Fläche: " + d.area.toFixed(2) + " ha<br/>Anteil: " + d.percentage.toFixed(1) + "%")
                         .style("left", (event.pageX + 10) + "px")
                         .style("top", (event.pageY - 28) + "px");
                 })
@@ -599,7 +599,7 @@ app.get('/', (req, res) => {
             // Add axes
             svg.append("g")
                 .attr("class", "axis")
-                .attr("transform", `translate(0,${height})`)
+                .attr("transform", "translate(0," + height + ")")
                 .call(d3.axisBottom(xScale))
                 .selectAll("text")
                 .style("text-anchor", "end")
