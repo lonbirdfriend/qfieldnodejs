@@ -41,21 +41,11 @@ function calculateProjectStatistics(projectData) {
   const data = projectData.data;
   const info = projectData.info || {};
   
-  console.log('calculateProjectStatistics called for project:', info);
-  console.log('Sample data entries:', data.slice(0, 3));
-  
   let totalPolygons = data.length;
   let completedPolygons = data.filter(p => p.bearbeitet && p.datum && p.farbe).length;
-  let totalArea = data.reduce((sum, p) => {
-    const flaeche = parseFloat(p.flaeche_ha) || 0;
-    console.log(`Total area calc - Polygon ${p.id}: flaeche_ha = ${p.flaeche_ha}, parsed = ${flaeche}`);
-    return sum + flaeche;
-  }, 0);
+  let totalArea = data.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
   let completedArea = data.filter(p => p.bearbeitet && p.datum && p.farbe)
-    .reduce((sum, p) => {
-      const flaeche = parseFloat(p.flaeche_ha) || 0;
-      return sum + flaeche;
-    }, 0);
+    .reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
   
   // Worker-Statistiken nach Farbe gruppiert
   let workerStats = {};
@@ -63,40 +53,7 @@ function calculateProjectStatistics(projectData) {
     if (info.colorWorkers && info.colorWorkers[colorCode]) {
       const workerName = info.colorWorkers[colorCode];
       const workerPolygons = data.filter(p => p.farbe === colorCode && p.bearbeitet && p.datum);
-      const workerArea = workerPolygons.reduce((sum, p) => {
-        const flaeche = parseFloat(p.flaeche_ha) || 0;
-        console.log(`Worker ${workerName} area calc - Polygon ${p.id}: flaeche_ha = ${p.flaeche_ha}, parsed = ${flaeche}`);
-        return sum + flaeche;
-      }, 0);
-      
-      // Chronologie nach Datum gruppieren
-      const dateGroups = {};
-      workerPolygons.forEach(p => {
-        const datum = p.datum;
-        if (!dateGroups[datum]) {
-          dateGroups[datum] = {
-            datum: datum,
-            area: 0,
-            polygonCount: 0,
-            polygonIds: []
-          };
-        }
-        // Explizit das flaeche_ha Attribut verwenden
-        const flaeche = parseFloat(p.flaeche_ha) || 0;
-        console.log(`Worker ${workerName}, Polygon ${p.id}, Datum ${datum}, Fläche: ${flaeche}`);
-        dateGroups[datum].area += flaeche;
-        dateGroups[datum].polygonCount += 1;
-        dateGroups[datum].polygonIds.push(p.id);
-      });
-      
-      // Gruppierte Chronologie erstellen und sortieren
-      const groupedChronology = Object.values(dateGroups)
-        .sort((a, b) => {
-          // Sortierung nach Datum (DD.MM.YYYY)
-          const dateA = a.datum.split('.').reverse().join('-');
-          const dateB = b.datum.split('.').reverse().join('-');
-          return new Date(dateB) - new Date(dateA);
-        });
+      const workerArea = workerPolygons.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
       
       workerStats[colorCode] = {
         name: workerName,
@@ -104,7 +61,18 @@ function calculateProjectStatistics(projectData) {
         area: workerArea,
         polygonCount: workerPolygons.length,
         percentage: totalArea > 0 ? (workerArea / totalArea * 100) : 0,
-        chronology: groupedChronology
+        chronology: workerPolygons
+          .map(p => ({
+            datum: p.datum,
+            area: parseFloat(p.flaeche_ha) || 0,
+            id: p.id
+          }))
+          .sort((a, b) => {
+            // Sortierung nach Datum (DD.MM.YYYY)
+            const dateA = a.datum.split('.').reverse().join('-');
+            const dateB = b.datum.split('.').reverse().join('-');
+            return new Date(dateB) - new Date(dateA);
+          })
       };
     }
   });
@@ -762,20 +730,20 @@ app.get('/', (req, res) => {
             let chronologyHtml = '';
             if (worker.chronology.length > 0) {
                 chronologyHtml = \`
-                    <h4>Chronologie nach Datum (neueste zuerst)</h4>
+                    <h4>Chronologie (neueste zuerst)</h4>
                     <table class="chronology-table">
                         <thead>
                             <tr>
                                 <th>Datum</th>
-                                <th>Anzahl Polygone</th>
-                                <th>Gesamtfläche (ha)</th>
+                                <th>Polygon ID</th>
+                                <th>Fläche (ha)</th>
                             </tr>
                         </thead>
                         <tbody>
                             \${worker.chronology.map(entry => \`
                                 <tr>
                                     <td>\${entry.datum}</td>
-                                    <td>\${entry.polygonCount}</td>
+                                    <td>\${entry.id}</td>
                                     <td>\${entry.area.toFixed(2)}</td>
                                 </tr>
                             \`).join('')}
@@ -855,3 +823,4 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+ 
