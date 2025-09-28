@@ -334,6 +334,27 @@ app.post('/api/status', async (req, res) => {
   }
 });
 
+// Debug-Endpoint um eingehende Daten zu analysieren
+app.post('/api/debug', async (req, res) => {
+  console.log('=== DEBUG REQUEST ===');
+  console.log('Headers:', req.headers);
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('Data array length:', req.body.data?.length);
+  
+  if (req.body.data && req.body.data.length > 0) {
+    console.log('Erstes Polygon (alle Felder):');
+    console.log(JSON.stringify(req.body.data[0], null, 2));
+    console.log('Verfügbare Schlüssel:', Object.keys(req.body.data[0]));
+  }
+  
+  res.json({
+    success: true,
+    message: 'Debug-Daten empfangen',
+    receivedFields: req.body.data?.[0] ? Object.keys(req.body.data[0]) : [],
+    dataCount: req.body.data?.length || 0
+  });
+});
+
 // Synchronisation
 app.post('/api/sync', async (req, res) => {
   const { action, layerName, data, timestamp, source, projectInfo } = req.body;
@@ -360,23 +381,29 @@ app.post('/api/sync', async (req, res) => {
     for (const incomingPolygon of data) {
       if (!incomingPolygon.id) continue;
       
-      // Debug: Prüfe alle verfügbaren Felder
-      console.log('📊 Eingehende Polygon-Daten:', {
-        id: incomingPolygon.id,
-        flaeche_ha: incomingPolygon.flaeche_ha,
-        Fläche_ha: incomingPolygon['Fläche_ha'], // Möglicher alternativer Feldname
-        bearbeitet: incomingPolygon.bearbeitet,
-        datum: incomingPolygon.datum,
-        farbe: incomingPolygon.farbe,
-        allKeys: Object.keys(incomingPolygon)
-      });
+      // Debug: Zeige alle verfügbaren Felder für dieses Polygon
+      console.log(`\n📊 Polygon ${incomingPolygon.id} - Alle Felder:`, Object.keys(incomingPolygon));
+      console.log('Rohdaten:', JSON.stringify(incomingPolygon, null, 2));
       
       // Flexiblere Feldnamenerkennung für Fläche
       let flaeche = incomingPolygon.flaeche_ha || 
                    incomingPolygon['Fläche_ha'] || 
                    incomingPolygon.area || 
                    incomingPolygon.Flaeche_ha ||
+                   incomingPolygon['Flaeche_ha'] ||
+                   incomingPolygon.flaeche ||
+                   incomingPolygon.Flaeche ||
                    0;
+      
+      console.log(`Fläche gefunden: ${flaeche} (aus Feld: ${
+        incomingPolygon.flaeche_ha ? 'flaeche_ha' :
+        incomingPolygon['Fläche_ha'] ? 'Fläche_ha' :
+        incomingPolygon.area ? 'area' :
+        incomingPolygon.Flaeche_ha ? 'Flaeche_ha' :
+        incomingPolygon['Flaeche_ha'] ? 'Flaeche_ha' :
+        incomingPolygon.flaeche ? 'flaeche' :
+        incomingPolygon.Flaeche ? 'Flaeche' : 'NICHT_GEFUNDEN'
+      })`);
       
       // Prüfe ob Polygon bereits existiert
       const existingResult = await client.query(`
@@ -392,39 +419,40 @@ app.post('/api/sync', async (req, res) => {
         const updateValues = [];
         let valueIndex = 1;
         
-        // Flaeche_ha immer aktualisieren wenn vorhanden
+        // Flaeche_ha immer aktualisieren wenn vorhanden und > 0
         if (flaeche > 0) {
-          updateFields.push(`flaeche_ha = $${valueIndex}`);
+          updateFields.push(`flaeche_ha = ${valueIndex}`);
           updateValues.push(flaeche);
           valueIndex++;
+          console.log(`Aktualisiere Fläche: ${existing.flaeche_ha} -> ${flaeche}`);
         }
         
         if (!existing.bearbeitet && incomingPolygon.bearbeitet) {
-          updateFields.push(`bearbeitet = $${valueIndex}`);
+          updateFields.push(`bearbeitet = ${valueIndex}`);
           updateValues.push(incomingPolygon.bearbeitet);
           valueIndex++;
         }
         
         if (!existing.datum && incomingPolygon.datum) {
-          updateFields.push(`datum = $${valueIndex}`);
+          updateFields.push(`datum = ${valueIndex}`);
           updateValues.push(incomingPolygon.datum);
           valueIndex++;
         }
         
         if (!existing.farbe && incomingPolygon.farbe) {
-          updateFields.push(`farbe = $${valueIndex}`);
+          updateFields.push(`farbe = ${valueIndex}`);
           updateValues.push(incomingPolygon.farbe);
           valueIndex++;
         }
         
         if (!existing.geometry && incomingPolygon.geometry) {
-          updateFields.push(`geometry = $${valueIndex}`);
+          updateFields.push(`geometry = ${valueIndex}`);
           updateValues.push(incomingPolygon.geometry);
           valueIndex++;
         }
         
         if (updateFields.length > 0) {
-          updateFields.push(`source = $${valueIndex}`);
+          updateFields.push(`source = ${valueIndex}`);
           updateValues.push(source || 'unknown');
           valueIndex++;
           
@@ -434,11 +462,13 @@ app.post('/api/sync', async (req, res) => {
           await client.query(`
             UPDATE polygons 
             SET ${updateFields.join(', ')}
-            WHERE project_id = $${valueIndex-1} AND polygon_id = $${valueIndex}
+            WHERE project_id = ${valueIndex-1} AND polygon_id = ${valueIndex}
           `, updateValues);
           
           updatedCount++;
           console.log(`🔄 Polygon ${incomingPolygon.id} aktualisiert (Fläche: ${flaeche} ha)`);
+        } else {
+          console.log(`⏭️ Polygon ${incomingPolygon.id} - keine Updates nötig`);
         }
         
       } else {
