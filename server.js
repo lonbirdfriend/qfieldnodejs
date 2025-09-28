@@ -14,8 +14,7 @@ app.use(express.static('public'));
 
 // PostgreSQL Konfiguration
 if (!process.env.DATABASE_URL) {
-  console.error('❌ FEHLER: DATABASE_URL Environment Variable ist nicht gesetzt!');
-  console.log('Setzen Sie DATABASE_URL in den Render Environment Variables.');
+  console.error('DATABASE_URL Environment Variable ist nicht gesetzt!');
   process.exit(1);
 }
 
@@ -34,20 +33,11 @@ async function initializeDatabase() {
   let client;
   try {
     client = await pool.connect();
-    console.log('✅ Datenbankverbindung erfolgreich');
+    console.log('Datenbankverbindung erfolgreich');
     
-    // Test query
     await client.query('SELECT NOW()');
-    console.log('✅ Datenbanktest erfolgreich');
+    console.log('Datenbanktest erfolgreich');
     
-  } catch (error) {
-    console.error('❌ Datenbankverbindung fehlgeschlagen:');
-    console.error('Database URL exists:', !!process.env.DATABASE_URL);
-    console.error('Error details:', error.message);
-    throw new Error(`Datenbankverbindung fehlgeschlagen: ${error.message}`);
-  }
-  
-  try {
     // Projects Tabelle
     await client.query(`
       CREATE TABLE IF NOT EXISTS projects (
@@ -96,42 +86,13 @@ async function initializeDatabase() {
       ON CONFLICT (id) DO NOTHING
     `);
 
-    // Update Trigger für updated_at
-    await client.query(`
-      CREATE OR REPLACE FUNCTION update_updated_at_column()
-      RETURNS TRIGGER AS $$
-      BEGIN
-        NEW.updated_at = CURRENT_TIMESTAMP;
-        RETURN NEW;
-      END;
-      $$ language 'plpgsql'
-    `);
-
-    // Trigger für Projects
-    await client.query(`
-      DROP TRIGGER IF EXISTS update_projects_updated_at ON projects;
-      CREATE TRIGGER update_projects_updated_at
-        BEFORE UPDATE ON projects
-        FOR EACH ROW
-        EXECUTE FUNCTION update_updated_at_column()
-    `);
-
-    // Trigger für Polygons
-    await client.query(`
-      DROP TRIGGER IF EXISTS update_polygons_updated_at ON polygons;
-      CREATE TRIGGER update_polygons_updated_at
-        BEFORE UPDATE ON polygons
-        FOR EACH ROW
-        EXECUTE FUNCTION update_updated_at_column()
-    `);
-
-    console.log('✅ Datenbank erfolgreich initialisiert');
+    console.log('Datenbank erfolgreich initialisiert');
     
   } catch (error) {
-    console.error('❌ Fehler bei Datenbankinitialisierung:', error);
-    throw error;
+    console.error('Datenbankverbindung fehlgeschlagen:', error.message);
+    throw new Error(`Datenbankverbindung fehlgeschlagen: ${error.message}`);
   } finally {
-    client.release();
+    if (client) client.release();
   }
 }
 
@@ -140,14 +101,12 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
   const client = await pool.connect();
   
   try {
-    // Versuche Projekt zu finden
     let result = await client.query(
       'SELECT * FROM projects WHERE name = $1',
       [projectName]
     );
 
     if (result.rows.length === 0) {
-      // Projekt erstellen
       result = await client.query(`
         INSERT INTO projects (name, color_workers, worker_percentages, session_info)
         VALUES ($1, $2, $3, $4)
@@ -159,9 +118,8 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
         JSON.stringify(projectInfo.sessionInfo || {})
       ]);
       
-      console.log(`🆕 Neues Projekt erstellt: ${projectName}`);
+      console.log(`Neues Projekt erstellt: ${projectName}`);
     } else if (Object.keys(projectInfo).length > 0) {
-      // Projekt-Info aktualisieren
       result = await client.query(`
         UPDATE projects 
         SET color_workers = $2, 
@@ -176,7 +134,7 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
         JSON.stringify(projectInfo.sessionInfo || result.rows[0].session_info)
       ]);
       
-      console.log(`🔄 Projekt-Info aktualisiert: ${projectName}`);
+      console.log(`Projekt-Info aktualisiert: ${projectName}`);
     }
 
     return result.rows[0];
@@ -190,7 +148,6 @@ async function calculateProjectStatistics(projectId) {
   const client = await pool.connect();
   
   try {
-    // Basis-Statistiken
     const statsResult = await client.query(`
       SELECT 
         COUNT(*) as total_polygons,
@@ -203,7 +160,6 @@ async function calculateProjectStatistics(projectId) {
 
     const stats = statsResult.rows[0];
     
-    // Worker-Statistiken
     const workerResult = await client.query(`
       SELECT 
         farbe,
@@ -225,18 +181,6 @@ async function calculateProjectStatistics(projectId) {
       GROUP BY farbe, bearbeitet
     `, [projectId]);
 
-    // Projekt-Info abrufen
-    const projectResult = await client.query(`
-      SELECT color_workers, worker_percentages 
-      FROM projects 
-      WHERE id = $1
-    `, [projectId]);
-
-    const projectInfo = projectResult.rows[0] || {};
-    const colorWorkers = projectInfo.color_workers || {};
-    const workerPercentages = projectInfo.worker_percentages || {};
-
-    // Worker-Statistiken formatieren
     const workerStats = {};
     workerResult.rows.forEach(worker => {
       const percentage = parseFloat(stats.total_area) > 0 ? 
@@ -270,7 +214,9 @@ async function calculateProjectStatistics(projectId) {
   }
 }
 
-// Health Check Endpoint
+// API Routes
+
+// Health Check
 app.get('/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
@@ -334,27 +280,6 @@ app.post('/api/status', async (req, res) => {
   }
 });
 
-// Debug-Endpoint um eingehende Daten zu analysieren
-app.post('/api/debug', async (req, res) => {
-  console.log('=== DEBUG REQUEST ===');
-  console.log('Headers:', req.headers);
-  console.log('Body:', JSON.stringify(req.body, null, 2));
-  console.log('Data array length:', req.body.data?.length);
-  
-  if (req.body.data && req.body.data.length > 0) {
-    console.log('Erstes Polygon (alle Felder):');
-    console.log(JSON.stringify(req.body.data[0], null, 2));
-    console.log('Verfügbare Schlüssel:', Object.keys(req.body.data[0]));
-  }
-  
-  res.json({
-    success: true,
-    message: 'Debug-Daten empfangen',
-    receivedFields: req.body.data?.[0] ? Object.keys(req.body.data[0]) : [],
-    dataCount: req.body.data?.length || 0
-  });
-});
-
 // Synchronisation
 app.post('/api/sync', async (req, res) => {
   const { action, layerName, data, timestamp, source, projectInfo } = req.body;
@@ -371,8 +296,6 @@ app.post('/api/sync', async (req, res) => {
     await client.query('BEGIN');
     
     const projectName = projectInfo?.projectName || layerName;
-    
-    // Projekt abrufen oder erstellen
     const project = await getOrCreateProject(projectName, projectInfo);
     
     let newCount = 0;
@@ -381,94 +304,70 @@ app.post('/api/sync', async (req, res) => {
     for (const incomingPolygon of data) {
       if (!incomingPolygon.id) continue;
       
-      // Debug: Zeige alle verfügbaren Felder für dieses Polygon
-      console.log(`\n📊 Polygon ${incomingPolygon.id} - Alle Felder:`, Object.keys(incomingPolygon));
-      console.log('Rohdaten:', JSON.stringify(incomingPolygon, null, 2));
-      
-      // Flexiblere Feldnamenerkennung für Fläche
+      // Flexible Feldnamenerkennung für Fläche
       let flaeche = incomingPolygon.flaeche_ha || 
                    incomingPolygon['Fläche_ha'] || 
-                   incomingPolygon.area || 
                    incomingPolygon.Flaeche_ha ||
-                   incomingPolygon['Flaeche_ha'] ||
+                   incomingPolygon['Flaeche_ha'] || 
+                   incomingPolygon.area || 
                    incomingPolygon.flaeche ||
-                   incomingPolygon.Flaeche ||
                    0;
-      
-      console.log(`Fläche gefunden: ${flaeche} (aus Feld: ${
-        incomingPolygon.flaeche_ha ? 'flaeche_ha' :
-        incomingPolygon['Fläche_ha'] ? 'Fläche_ha' :
-        incomingPolygon.area ? 'area' :
-        incomingPolygon.Flaeche_ha ? 'Flaeche_ha' :
-        incomingPolygon['Flaeche_ha'] ? 'Flaeche_ha' :
-        incomingPolygon.flaeche ? 'flaeche' :
-        incomingPolygon.Flaeche ? 'Flaeche' : 'NICHT_GEFUNDEN'
-      })`);
       
       // Prüfe ob Polygon bereits existiert
       const existingResult = await client.query(`
         SELECT * FROM polygons 
         WHERE project_id = $1 AND polygon_id = $2
-      `, [parseInt(project.id), incomingPolygon.id.toString()]);
+      `, [project.id, incomingPolygon.id]);
       
       if (existingResult.rows.length > 0) {
-        // Update: Fülle nur leere Felder
+        // Update - baue Query dynamisch auf
         const existing = existingResult.rows[0];
-        
         const updateFields = [];
         const updateValues = [];
-        let valueIndex = 1;
         
-        // Flaeche_ha immer aktualisieren wenn vorhanden und > 0
-        if (flaeche > 0) {
-          updateFields.push(`flaeche_ha = ${valueIndex}`);
-          updateValues.push(flaeche);
-          valueIndex++;
-          console.log(`Aktualisiere Fläche: ${existing.flaeche_ha} -> ${flaeche}`);
+        // Fläche nur aktualisieren wenn wirklich anders (Toleranz für Rundungsfehler)
+        if (flaeche > 0 && Math.abs(parseFloat(existing.flaeche_ha || 0) - parseFloat(flaeche)) > 0.0001) {
+          updateFields.push('flaeche_ha = $' + (updateValues.length + 1));
+          updateValues.push(parseFloat(flaeche));
         }
         
         if (!existing.bearbeitet && incomingPolygon.bearbeitet) {
-          updateFields.push(`bearbeitet = ${valueIndex}`);
+          updateFields.push('bearbeitet = $' + (updateValues.length + 1));
           updateValues.push(incomingPolygon.bearbeitet);
-          valueIndex++;
         }
         
         if (!existing.datum && incomingPolygon.datum) {
-          updateFields.push(`datum = ${valueIndex}`);
+          updateFields.push('datum = $' + (updateValues.length + 1));
           updateValues.push(incomingPolygon.datum);
-          valueIndex++;
         }
         
         if (!existing.farbe && incomingPolygon.farbe) {
-          updateFields.push(`farbe = ${valueIndex}`);
+          updateFields.push('farbe = $' + (updateValues.length + 1));
           updateValues.push(incomingPolygon.farbe);
-          valueIndex++;
         }
         
         if (!existing.geometry && incomingPolygon.geometry) {
-          updateFields.push(`geometry = ${valueIndex}`);
+          updateFields.push('geometry = $' + (updateValues.length + 1));
           updateValues.push(incomingPolygon.geometry);
-          valueIndex++;
         }
         
         if (updateFields.length > 0) {
-          updateFields.push(`source = ${valueIndex}`);
+          updateFields.push('source = $' + (updateValues.length + 1));
           updateValues.push(source || 'unknown');
-          valueIndex++;
           
+          // WHERE Klausel Parameter
           updateValues.push(project.id);
           updateValues.push(incomingPolygon.id);
           
-          await client.query(`
+          const updateQuery = `
             UPDATE polygons 
             SET ${updateFields.join(', ')}
-            WHERE project_id = ${valueIndex-1} AND polygon_id = ${valueIndex}
-          `, updateValues);
+            WHERE project_id = $${updateValues.length - 1} AND polygon_id = $${updateValues.length}
+          `;
           
+          await client.query(updateQuery, updateValues);
           updatedCount++;
-          console.log(`🔄 Polygon ${incomingPolygon.id} aktualisiert (Fläche: ${flaeche} ha)`);
-        } else {
-          console.log(`⏭️ Polygon ${incomingPolygon.id} - keine Updates nötig`);
+          console.log(`Polygon ${incomingPolygon.id} aktualisiert`);
         }
         
       } else {
@@ -478,18 +377,18 @@ app.post('/api/sync', async (req, res) => {
             project_id, polygon_id, flaeche_ha, bearbeitet, datum, farbe, geometry, source
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [
-          parseInt(project.id),                    // project_id als Integer
-          incomingPolygon.id.toString(),          // polygon_id als String
-          parseFloat(flaeche) || 0,               // flaeche_ha als Float
-          incomingPolygon.bearbeitet || '',       // bearbeitet als String
-          incomingPolygon.datum || '',            // datum als String
-          incomingPolygon.farbe || '',            // farbe als String
-          incomingPolygon.geometry || '',         // geometry als String
-          source || 'unknown'                     // source als String
+          project.id,
+          incomingPolygon.id,
+          parseFloat(flaeche) || 0,
+          incomingPolygon.bearbeitet || '',
+          incomingPolygon.datum || '',
+          incomingPolygon.farbe || '',
+          incomingPolygon.geometry || '',
+          source || 'unknown'
         ]);
         
         newCount++;
-        console.log(`✅ Neues Polygon ${incomingPolygon.id} erstellt (Fläche: ${flaeche} ha)`);
+        console.log(`Neues Polygon ${incomingPolygon.id} erstellt (Fläche: ${flaeche} ha)`);
       }
     }
     
@@ -502,7 +401,7 @@ app.post('/api/sync', async (req, res) => {
     
     await client.query('COMMIT');
     
-    console.log(`✅ Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
+    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
     
     res.json({
       success: true,
@@ -518,7 +417,7 @@ app.post('/api/sync', async (req, res) => {
     
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('❌ Sync Fehler:', error);
+    console.error('Sync Fehler:', error);
     res.status(500).json({ error: 'Synchronisation fehlgeschlagen: ' + error.message });
   } finally {
     client.release();
@@ -577,7 +476,6 @@ app.get('/api/project/:projectName', async (req, res) => {
     
     const project = projectResult.rows[0];
     
-    // Polygon-Daten abrufen
     const polygonsResult = await pool.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry, 
              created_at, updated_at, source
@@ -607,7 +505,7 @@ app.get('/api/project/:projectName', async (req, res) => {
   }
 });
 
-// Legacy Endpoints für Rückwärtskompatibilität
+// Legacy Endpoints
 app.get('/api/data/:layerName', async (req, res) => {
   const { layerName } = req.params;
   
@@ -757,7 +655,7 @@ app.get('/', (req, res) => {
 <body>
     <div class="container">
         <div class="header">
-            <h1>🐘 QField PostgreSQL Dashboard</h1>
+            <h1>QField PostgreSQL Dashboard</h1>
             <p>Modernisierte Version mit PostgreSQL Backend</p>
         </div>
         
@@ -784,10 +682,10 @@ app.get('/', (req, res) => {
                 
                 statusDiv.className = data.status ? 'status online' : 'status offline';
                 statusDiv.textContent = data.status ? 
-                    'System Online ✅' : 'System Offline ❌';
+                    'System Online' : 'System Offline';
             } catch (error) {
                 document.getElementById('status').innerHTML = 
-                    '<div class="status offline">Verbindungsfehler ❌</div>';
+                    '<div class="status offline">Verbindungsfehler</div>';
             }
         }
         
@@ -846,19 +744,16 @@ app.get('/', (req, res) => {
             try {
                 const response = await fetch('/api/projects');
                 if (response.ok) {
-                    alert('✅ Datenbankverbindung erfolgreich!');
+                    alert('Datenbankverbindung erfolgreich!');
                 } else {
-                    alert('❌ Datenbankverbindung fehlgeschlagen!');
+                    alert('Datenbankverbindung fehlgeschlagen!');
                 }
             } catch (error) {
-                alert('❌ Verbindungsfehler: ' + error.message);
+                alert('Verbindungsfehler: ' + error.message);
             }
         }
         
-        // Initial laden
         loadData();
-        
-        // Auto-refresh alle 30 Sekunden
         setInterval(loadData, 30000);
     </script>
 </body>
@@ -868,7 +763,7 @@ app.get('/', (req, res) => {
 
 // Server starten
 async function startServer() {
-  console.log('🚀 Starte QField PostgreSQL Server...');
+  console.log('Starte QField PostgreSQL Server...');
   console.log('Environment:', process.env.NODE_ENV || 'development');
   console.log('Port:', PORT);
   console.log('Database URL vorhanden:', !!process.env.DATABASE_URL);
@@ -879,11 +774,11 @@ async function startServer() {
     
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
-🚀 PostgreSQL Server läuft auf Port ${PORT}
-🐘 Datenbank: PostgreSQL (${process.env.NODE_ENV === 'production' ? 'Render' : 'Lokal'})
-📊 Dashboard: ${process.env.NODE_ENV === 'production' ? `https://${process.env.RENDER_SERVICE_NAME || 'qfieldnodejs'}.onrender.com` : `http://localhost:${PORT}`}
-❤️  Health Check: /health
-🔗 API Endpoints:
+PostgreSQL Server läuft auf Port ${PORT}
+Datenbank: PostgreSQL (${process.env.NODE_ENV === 'production' ? 'Render' : 'Lokal'})
+Dashboard: ${process.env.NODE_ENV === 'production' ? `https://${process.env.RENDER_SERVICE_NAME || 'qfieldnodejs'}.onrender.com` : `http://localhost:${PORT}`}
+Health Check: /health
+API Endpoints:
    - GET  /api/status
    - POST /api/status  
    - POST /api/sync
@@ -892,7 +787,7 @@ async function startServer() {
       `);
     });
   } catch (error) {
-    console.error('❌ Server konnte nicht gestartet werden:', error.message);
+    console.error('Server konnte nicht gestartet werden:', error.message);
     console.error('Überprüfen Sie die DATABASE_URL Environment Variable');
     process.exit(1);
   }
