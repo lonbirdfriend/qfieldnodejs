@@ -13,14 +13,39 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
 // PostgreSQL Konfiguration
+if (!process.env.DATABASE_URL) {
+  console.error('❌ FEHLER: DATABASE_URL Environment Variable ist nicht gesetzt!');
+  console.log('Setzen Sie DATABASE_URL in den Render Environment Variables.');
+  process.exit(1);
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
 
 // Datenbankinitialisierung
 async function initializeDatabase() {
-  const client = await pool.connect();
+  console.log('Teste Datenbankverbindung...');
+  
+  let client;
+  try {
+    client = await pool.connect();
+    console.log('✅ Datenbankverbindung erfolgreich');
+    
+    // Test query
+    await client.query('SELECT NOW()');
+    console.log('✅ Datenbanktest erfolgreich');
+    
+  } catch (error) {
+    console.error('❌ Datenbankverbindung fehlgeschlagen:');
+    console.error('Database URL exists:', !!process.env.DATABASE_URL);
+    console.error('Error details:', error.message);
+    throw new Error(`Datenbankverbindung fehlgeschlagen: ${error.message}`);
+  }
   
   try {
     // Projects Tabelle
@@ -245,7 +270,23 @@ async function calculateProjectStatistics(projectId) {
   }
 }
 
-// API Routes
+// Health Check Endpoint
+app.get('/health', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW()');
+    res.json({ 
+      status: 'healthy',
+      database: 'connected',
+      timestamp: result.rows[0].now
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: error.message
+    });
+  }
+});
 
 // Server Status
 app.get('/api/status', async (req, res) => {
@@ -797,14 +838,21 @@ app.get('/', (req, res) => {
 
 // Server starten
 async function startServer() {
+  console.log('🚀 Starte QField PostgreSQL Server...');
+  console.log('Environment:', process.env.NODE_ENV || 'development');
+  console.log('Port:', PORT);
+  console.log('Database URL vorhanden:', !!process.env.DATABASE_URL);
+  
   try {
+    console.log('Initialisiere Datenbank...');
     await initializeDatabase();
     
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 🚀 PostgreSQL Server läuft auf Port ${PORT}
-🐘 Datenbank: ${process.env.DATABASE_URL ? 'PostgreSQL (Render)' : 'PostgreSQL (Lokal)'}
-📊 Dashboard: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
+🐘 Datenbank: PostgreSQL (${process.env.NODE_ENV === 'production' ? 'Render' : 'Lokal'})
+📊 Dashboard: ${process.env.NODE_ENV === 'production' ? `https://${process.env.RENDER_SERVICE_NAME || 'qfieldnodejs'}.onrender.com` : `http://localhost:${PORT}`}
+❤️  Health Check: /health
 🔗 API Endpoints:
    - GET  /api/status
    - POST /api/status  
@@ -814,7 +862,8 @@ async function startServer() {
       `);
     });
   } catch (error) {
-    console.error('❌ Server konnte nicht gestartet werden:', error);
+    console.error('❌ Server konnte nicht gestartet werden:', error.message);
+    console.error('Überprüfen Sie die DATABASE_URL Environment Variable');
     process.exit(1);
   }
 }
