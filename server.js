@@ -409,7 +409,7 @@ app.post('/api/sync', async (req, res) => {
       const existingResult = await client.query(`
         SELECT * FROM polygons 
         WHERE project_id = $1 AND polygon_id = $2
-      `, [project.id, incomingPolygon.id]);
+      `, [parseInt(project.id), incomingPolygon.id.toString()]);
       
       if (existingResult.rows.length > 0) {
         // Update: Fülle nur leere Felder
@@ -478,14 +478,14 @@ app.post('/api/sync', async (req, res) => {
             project_id, polygon_id, flaeche_ha, bearbeitet, datum, farbe, geometry, source
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [
-          project.id,
-          incomingPolygon.id,
-          flaeche,
-          incomingPolygon.bearbeitet || '',
-          incomingPolygon.datum || '',
-          incomingPolygon.farbe || '',
-          incomingPolygon.geometry || '',
-          source || 'unknown'
+          parseInt(project.id),                    // project_id als Integer
+          incomingPolygon.id.toString(),          // polygon_id als String
+          parseFloat(flaeche) || 0,               // flaeche_ha als Float
+          incomingPolygon.bearbeitet || '',       // bearbeitet als String
+          incomingPolygon.datum || '',            // datum als String
+          incomingPolygon.farbe || '',            // farbe als String
+          incomingPolygon.geometry || '',         // geometry als String
+          source || 'unknown'                     // source als String
         ]);
         
         newCount++;
