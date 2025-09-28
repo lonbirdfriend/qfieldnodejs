@@ -1,7 +1,8 @@
-// server.js - Erweiterte Version mit Projekt-Dashboard
+// server.js - PostgreSQL Version für QField Synchronisation
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,301 +12,592 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
-// Server Status
-let serverStatus = {
-  status: false,
-  lastUpdate: new Date().toISOString(),
-  source: 'server'
-};
+// PostgreSQL Konfiguration
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
 
-// Polygon data storage - erweitert mit Projektinformationen
-let polygonDatabase = {
-  projects: {},  // Struktur: { projectName: { data: [], info: { name, colorWorkers, workerPercentages } } }
-  lastSync: null
-};
+// Datenbankinitialisierung
+async function initializeDatabase() {
+  const client = await pool.connect();
+  
+  try {
+    // Projects Tabelle
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        color_workers JSONB DEFAULT '{}',
+        worker_percentages JSONB DEFAULT '{}',
+        session_info JSONB DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-// Hilfsfunktionen für Statistiken
-function calculateProjectStatistics(projectData) {
-  if (!projectData || !projectData.data) {
-    return {
-      totalPolygons: 0,
-      completedPolygons: 0,
-      completionPercentage: 0,
-      totalArea: 0,
-      completedArea: 0,
-      workerStats: {},
-      participantCount: 0
-    };
+    // Polygons Tabelle
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS polygons (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        polygon_id VARCHAR(255) NOT NULL,
+        flaeche_ha DECIMAL(10,4) DEFAULT 0,
+        bearbeitet VARCHAR(255) DEFAULT '',
+        datum VARCHAR(50) DEFAULT '',
+        farbe VARCHAR(10) DEFAULT '',
+        geometry TEXT DEFAULT '',
+        source VARCHAR(100) DEFAULT 'unknown',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, polygon_id)
+    )`);
+
+    // Server Status Tabelle
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS server_status (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        status BOOLEAN DEFAULT false,
+        last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        source VARCHAR(100) DEFAULT 'server',
+        CONSTRAINT single_row CHECK (id = 1)
+      )
+    `);
+
+    // Initial Status einfügen falls nicht vorhanden
+    await client.query(`
+      INSERT INTO server_status (id, status, last_update, source)
+      VALUES (1, false, CURRENT_TIMESTAMP, 'server')
+      ON CONFLICT (id) DO NOTHING
+    `);
+
+    // Update Trigger für updated_at
+    await client.query(`
+      CREATE OR REPLACE FUNCTION update_updated_at_column()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+        RETURN NEW;
+      END;
+      $$ language 'plpgsql'
+    `);
+
+    // Trigger für Projects
+    await client.query(`
+      DROP TRIGGER IF EXISTS update_projects_updated_at ON projects;
+      CREATE TRIGGER update_projects_updated_at
+        BEFORE UPDATE ON projects
+        FOR EACH ROW
+        EXECUTE FUNCTION update_updated_at_column()
+    `);
+
+    // Trigger für Polygons
+    await client.query(`
+      DROP TRIGGER IF EXISTS update_polygons_updated_at ON polygons;
+      CREATE TRIGGER update_polygons_updated_at
+        BEFORE UPDATE ON polygons
+        FOR EACH ROW
+        EXECUTE FUNCTION update_updated_at_column()
+    `);
+
+    console.log('✅ Datenbank erfolgreich initialisiert');
+    
+  } catch (error) {
+    console.error('❌ Fehler bei Datenbankinitialisierung:', error);
+    throw error;
+  } finally {
+    client.release();
   }
+}
 
-  const data = projectData.data;
-  const info = projectData.info || {};
+// Hilfsfunktionen
+async function getOrCreateProject(projectName, projectInfo = {}) {
+  const client = await pool.connect();
   
-  let totalPolygons = data.length;
-  let completedPolygons = data.filter(p => p.bearbeitet && p.datum && p.farbe).length;
-  let totalArea = data.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
-  let completedArea = data.filter(p => p.bearbeitet && p.datum && p.farbe)
-    .reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
-  
-  // Worker-Statistiken nach Farbe gruppiert
-  let workerStats = {};
-  ['r', 'g', 'b', 'y'].forEach(colorCode => {
-    if (info.colorWorkers && info.colorWorkers[colorCode]) {
-      const workerName = info.colorWorkers[colorCode];
-      const workerPolygons = data.filter(p => p.farbe === colorCode && p.bearbeitet && p.datum);
-      const workerArea = workerPolygons.reduce((sum, p) => sum + (parseFloat(p.flaeche_ha) || 0), 0);
+  try {
+    // Versuche Projekt zu finden
+    let result = await client.query(
+      'SELECT * FROM projects WHERE name = $1',
+      [projectName]
+    );
+
+    if (result.rows.length === 0) {
+      // Projekt erstellen
+      result = await client.query(`
+        INSERT INTO projects (name, color_workers, worker_percentages, session_info)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+      `, [
+        projectName,
+        JSON.stringify(projectInfo.colorWorkers || {}),
+        JSON.stringify(projectInfo.workerPercentages || {}),
+        JSON.stringify(projectInfo.sessionInfo || {})
+      ]);
       
-      workerStats[colorCode] = {
-        name: workerName,
-        color: colorCode,
-        area: workerArea,
-        polygonCount: workerPolygons.length,
-        percentage: totalArea > 0 ? (workerArea / totalArea * 100) : 0,
-        chronology: workerPolygons
-          .map(p => ({
-            datum: p.datum,
-            area: parseFloat(p.flaeche_ha) || 0,
-            id: p.id
-          }))
-          .sort((a, b) => {
-            // Sortierung nach Datum (DD.MM.YYYY)
-            const dateA = a.datum.split('.').reverse().join('-');
-            const dateB = b.datum.split('.').reverse().join('-');
-            return new Date(dateB) - new Date(dateA);
-          })
-      };
+      console.log(`🆕 Neues Projekt erstellt: ${projectName}`);
+    } else if (Object.keys(projectInfo).length > 0) {
+      // Projekt-Info aktualisieren
+      result = await client.query(`
+        UPDATE projects 
+        SET color_workers = $2, 
+            worker_percentages = $3, 
+            session_info = $4
+        WHERE name = $1
+        RETURNING *
+      `, [
+        projectName,
+        JSON.stringify(projectInfo.colorWorkers || result.rows[0].color_workers),
+        JSON.stringify(projectInfo.workerPercentages || result.rows[0].worker_percentages),
+        JSON.stringify(projectInfo.sessionInfo || result.rows[0].session_info)
+      ]);
+      
+      console.log(`🔄 Projekt-Info aktualisiert: ${projectName}`);
     }
-  });
 
-  return {
-    totalPolygons,
-    completedPolygons,
-    completionPercentage: totalPolygons > 0 ? (completedPolygons / totalPolygons * 100) : 0,
-    totalArea,
-    completedArea,
-    completionAreaPercentage: totalArea > 0 ? (completedArea / totalArea * 100) : 0,
-    workerStats,
-    participantCount: Object.keys(workerStats).length
-  };
+    return result.rows[0];
+    
+  } finally {
+    client.release();
+  }
+}
+
+async function calculateProjectStatistics(projectId) {
+  const client = await pool.connect();
+  
+  try {
+    // Basis-Statistiken
+    const statsResult = await client.query(`
+      SELECT 
+        COUNT(*) as total_polygons,
+        COUNT(CASE WHEN bearbeitet != '' AND datum != '' AND farbe != '' THEN 1 END) as completed_polygons,
+        COALESCE(SUM(flaeche_ha), 0) as total_area,
+        COALESCE(SUM(CASE WHEN bearbeitet != '' AND datum != '' AND farbe != '' THEN flaeche_ha ELSE 0 END), 0) as completed_area
+      FROM polygons 
+      WHERE project_id = $1
+    `, [projectId]);
+
+    const stats = statsResult.rows[0];
+    
+    // Worker-Statistiken
+    const workerResult = await client.query(`
+      SELECT 
+        farbe,
+        bearbeitet,
+        COUNT(*) as polygon_count,
+        COALESCE(SUM(flaeche_ha), 0) as area,
+        array_agg(
+          json_build_object(
+            'datum', datum,
+            'area', flaeche_ha,
+            'id', polygon_id
+          ) ORDER BY datum DESC
+        ) as chronology
+      FROM polygons 
+      WHERE project_id = $1 
+        AND bearbeitet != '' 
+        AND datum != '' 
+        AND farbe != ''
+      GROUP BY farbe, bearbeitet
+    `, [projectId]);
+
+    // Projekt-Info abrufen
+    const projectResult = await client.query(`
+      SELECT color_workers, worker_percentages 
+      FROM projects 
+      WHERE id = $1
+    `, [projectId]);
+
+    const projectInfo = projectResult.rows[0] || {};
+    const colorWorkers = projectInfo.color_workers || {};
+    const workerPercentages = projectInfo.worker_percentages || {};
+
+    // Worker-Statistiken formatieren
+    const workerStats = {};
+    workerResult.rows.forEach(worker => {
+      const percentage = parseFloat(stats.total_area) > 0 ? 
+        (parseFloat(worker.area) / parseFloat(stats.total_area) * 100) : 0;
+      
+      workerStats[worker.farbe] = {
+        name: worker.bearbeitet,
+        color: worker.farbe,
+        area: parseFloat(worker.area),
+        polygonCount: parseInt(worker.polygon_count),
+        percentage: percentage,
+        chronology: worker.chronology.filter(entry => entry.datum && entry.area)
+      };
+    });
+
+    return {
+      totalPolygons: parseInt(stats.total_polygons),
+      completedPolygons: parseInt(stats.completed_polygons),
+      completionPercentage: parseInt(stats.total_polygons) > 0 ? 
+        (parseInt(stats.completed_polygons) / parseInt(stats.total_polygons) * 100) : 0,
+      totalArea: parseFloat(stats.total_area),
+      completedArea: parseFloat(stats.completed_area),
+      completionAreaPercentage: parseFloat(stats.total_area) > 0 ? 
+        (parseFloat(stats.completed_area) / parseFloat(stats.total_area) * 100) : 0,
+      workerStats,
+      participantCount: Object.keys(workerStats).length
+    };
+    
+  } finally {
+    client.release();
+  }
 }
 
 // API Routes
-app.get('/api/status', (req, res) => {
-  console.log('GET /api/status - Current status:', serverStatus.status ? 'GRÜN' : 'ROT');
-  res.json(serverStatus);
+
+// Server Status
+app.get('/api/status', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM server_status WHERE id = 1');
+    const status = result.rows[0];
+    
+    console.log('GET /api/status - Current status:', status.status ? 'GRÜN' : 'ROT');
+    
+    res.json({
+      status: status.status,
+      lastUpdate: status.last_update,
+      source: status.source
+    });
+  } catch (error) {
+    console.error('Fehler beim Abrufen des Status:', error);
+    res.status(500).json({ error: 'Serverfehler' });
+  }
 });
 
-app.post('/api/status', (req, res) => {
+app.post('/api/status', async (req, res) => {
   const { status, timestamp, source } = req.body;
   
   if (typeof status !== 'boolean') {
-    return res.status(400).json({ error: 'Status must be boolean' });
+    return res.status(400).json({ error: 'Status muss boolean sein' });
   }
   
-  serverStatus = {
-    status: status,
-    lastUpdate: timestamp || new Date().toISOString(),
-    source: source || 'unknown'
-  };
-  
-  console.log(`POST /api/status - Status geändert zu: ${status ? 'GRÜN' : 'ROT'} (von ${source || 'unknown'})`);
-  
-  res.json({
-    success: true,
-    status: serverStatus.status,
-    message: `Status auf ${status ? 'GRÜN' : 'ROT'} gesetzt`
-  });
+  try {
+    await pool.query(`
+      UPDATE server_status 
+      SET status = $1, last_update = $2, source = $3 
+      WHERE id = 1
+    `, [status, timestamp || new Date().toISOString(), source || 'unknown']);
+    
+    console.log(`POST /api/status - Status geändert zu: ${status ? 'GRÜN' : 'ROT'} (von ${source || 'unknown'})`);
+    
+    res.json({
+      success: true,
+      status: status,
+      message: `Status auf ${status ? 'GRÜN' : 'ROT'} gesetzt`
+    });
+  } catch (error) {
+    console.error('Fehler beim Setzen des Status:', error);
+    res.status(500).json({ error: 'Serverfehler' });
+  }
 });
 
-// Erweiterte Synchronisation mit Projektinformationen
-app.post('/api/sync', (req, res) => {
+// Synchronisation
+app.post('/api/sync', async (req, res) => {
   const { action, layerName, data, timestamp, source, projectInfo } = req.body;
   
   console.log(`POST /api/sync - Layer: ${layerName}, Action: ${action}, Polygons: ${data ? data.length : 0}`);
   
   if (!layerName || !data || !Array.isArray(data)) {
-    return res.status(400).json({ error: 'LayerName and data array required' });
+    return res.status(400).json({ error: 'LayerName und data array erforderlich' });
   }
   
+  const client = await pool.connect();
+  
   try {
+    await client.query('BEGIN');
+    
     const projectName = projectInfo?.projectName || layerName;
     
-    // Initialisiere Projekt falls es nicht existiert
-    if (!polygonDatabase.projects[projectName]) {
-      polygonDatabase.projects[projectName] = {
-        data: [],
-        info: projectInfo || {}
-      };
-      console.log(`Neues Projekt '${projectName}' erstellt`);
-    }
+    // Projekt abrufen oder erstellen
+    const project = await getOrCreateProject(projectName, projectInfo);
     
-    // Aktualisiere Projektinformationen
-    if (projectInfo) {
-      polygonDatabase.projects[projectName].info = {
-        ...polygonDatabase.projects[projectName].info,
-        ...projectInfo
-      };
-    }
-    
-    let existingData = polygonDatabase.projects[projectName].data;
-    let mergedData = [];
     let newCount = 0;
     let updatedCount = 0;
     
-    // Erstelle Map für schnellen Zugriff auf existierende Daten
-    let existingMap = {};
-    existingData.forEach(item => {
-      if (item.id) {
-        existingMap[item.id] = item;
-      }
-    });
-    
-    // Verarbeite eingehende Daten
-    data.forEach(incomingPolygon => {
-      if (!incomingPolygon.id) return;
+    for (const incomingPolygon of data) {
+      if (!incomingPolygon.id) continue;
       
-      let existingPolygon = existingMap[incomingPolygon.id];
+      // Debug: Prüfe alle verfügbaren Felder
+      console.log('📊 Eingehende Polygon-Daten:', {
+        id: incomingPolygon.id,
+        flaeche_ha: incomingPolygon.flaeche_ha,
+        Fläche_ha: incomingPolygon['Fläche_ha'], // Möglicher alternativer Feldname
+        bearbeitet: incomingPolygon.bearbeitet,
+        datum: incomingPolygon.datum,
+        farbe: incomingPolygon.farbe,
+        allKeys: Object.keys(incomingPolygon)
+      });
       
-      if (existingPolygon) {
-        // Merge: Fülle leere Felder mit vorhandenen Daten
-        let merged = {
-          id: incomingPolygon.id,
-          flaeche_ha: incomingPolygon.flaeche_ha || existingPolygon.flaeche_ha || 0,
-          bearbeitet: incomingPolygon.bearbeitet || existingPolygon.bearbeitet || "",
-          datum: incomingPolygon.datum || existingPolygon.datum || "",
-          farbe: incomingPolygon.farbe || existingPolygon.farbe || "",
-          geometry: incomingPolygon.geometry || existingPolygon.geometry || "",
-          lastUpdate: timestamp || new Date().toISOString(),
-          source: source || 'unknown'
-        };
+      // Flexiblere Feldnamenerkennung für Fläche
+      let flaeche = incomingPolygon.flaeche_ha || 
+                   incomingPolygon['Fläche_ha'] || 
+                   incomingPolygon.area || 
+                   incomingPolygon.Flaeche_ha ||
+                   0;
+      
+      // Prüfe ob Polygon bereits existiert
+      const existingResult = await client.query(`
+        SELECT * FROM polygons 
+        WHERE project_id = $1 AND polygon_id = $2
+      `, [project.id, incomingPolygon.id]);
+      
+      if (existingResult.rows.length > 0) {
+        // Update: Fülle nur leere Felder
+        const existing = existingResult.rows[0];
         
-        // Prüfe ob sich etwas geändert hat
-        if (JSON.stringify(merged) !== JSON.stringify(existingPolygon)) {
-          updatedCount++;
+        const updateFields = [];
+        const updateValues = [];
+        let valueIndex = 1;
+        
+        // Flaeche_ha immer aktualisieren wenn vorhanden
+        if (flaeche > 0) {
+          updateFields.push(`flaeche_ha = $${valueIndex}`);
+          updateValues.push(flaeche);
+          valueIndex++;
         }
         
-        mergedData.push(merged);
+        if (!existing.bearbeitet && incomingPolygon.bearbeitet) {
+          updateFields.push(`bearbeitet = $${valueIndex}`);
+          updateValues.push(incomingPolygon.bearbeitet);
+          valueIndex++;
+        }
+        
+        if (!existing.datum && incomingPolygon.datum) {
+          updateFields.push(`datum = $${valueIndex}`);
+          updateValues.push(incomingPolygon.datum);
+          valueIndex++;
+        }
+        
+        if (!existing.farbe && incomingPolygon.farbe) {
+          updateFields.push(`farbe = $${valueIndex}`);
+          updateValues.push(incomingPolygon.farbe);
+          valueIndex++;
+        }
+        
+        if (!existing.geometry && incomingPolygon.geometry) {
+          updateFields.push(`geometry = $${valueIndex}`);
+          updateValues.push(incomingPolygon.geometry);
+          valueIndex++;
+        }
+        
+        if (updateFields.length > 0) {
+          updateFields.push(`source = $${valueIndex}`);
+          updateValues.push(source || 'unknown');
+          valueIndex++;
+          
+          updateValues.push(project.id);
+          updateValues.push(incomingPolygon.id);
+          
+          await client.query(`
+            UPDATE polygons 
+            SET ${updateFields.join(', ')}
+            WHERE project_id = $${valueIndex-1} AND polygon_id = $${valueIndex}
+          `, updateValues);
+          
+          updatedCount++;
+          console.log(`🔄 Polygon ${incomingPolygon.id} aktualisiert (Fläche: ${flaeche} ha)`);
+        }
+        
       } else {
-        // Neues Polygon
-        mergedData.push({
-          id: incomingPolygon.id,
-          flaeche_ha: incomingPolygon.flaeche_ha || 0,
-          bearbeitet: incomingPolygon.bearbeitet || "",
-          datum: incomingPolygon.datum || "",
-          farbe: incomingPolygon.farbe || "",
-          geometry: incomingPolygon.geometry || "",
-          lastUpdate: timestamp || new Date().toISOString(),
-          source: source || 'unknown'
-        });
+        // Neues Polygon einfügen
+        await client.query(`
+          INSERT INTO polygons (
+            project_id, polygon_id, flaeche_ha, bearbeitet, datum, farbe, geometry, source
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          project.id,
+          incomingPolygon.id,
+          flaeche,
+          incomingPolygon.bearbeitet || '',
+          incomingPolygon.datum || '',
+          incomingPolygon.farbe || '',
+          incomingPolygon.geometry || '',
+          source || 'unknown'
+        ]);
+        
         newCount++;
+        console.log(`✅ Neues Polygon ${incomingPolygon.id} erstellt (Fläche: ${flaeche} ha)`);
       }
-    });
+    }
     
-    // Füge bestehende Polygone hinzu, die nicht in den neuen Daten waren
-    existingData.forEach(existing => {
-      let found = data.find(incoming => incoming.id === existing.id);
-      if (!found) {
-        mergedData.push(existing);
-      }
-    });
+    // Alle Polygone für Rückgabe abrufen
+    const allPolygonsResult = await client.query(`
+      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry
+      FROM polygons 
+      WHERE project_id = $1
+    `, [project.id]);
     
-    // Aktualisiere das Projekt
-    polygonDatabase.projects[projectName].data = mergedData;
-    polygonDatabase.lastSync = new Date().toISOString();
+    await client.query('COMMIT');
     
-    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${mergedData.length}`);
+    console.log(`✅ Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
     
     res.json({
       success: true,
-      message: `Synchronisation erfolgreich`,
+      message: 'Synchronisation erfolgreich',
       statistics: {
-        totalPolygons: mergedData.length,
+        totalPolygons: allPolygonsResult.rows.length,
         newPolygons: newCount,
         updatedPolygons: updatedCount,
-        lastSync: polygonDatabase.lastSync
+        lastSync: new Date().toISOString()
       },
-      serverData: mergedData
+      serverData: allPolygonsResult.rows
     });
     
   } catch (error) {
-    console.error('Sync Error:', error);
+    await client.query('ROLLBACK');
+    console.error('❌ Sync Fehler:', error);
     res.status(500).json({ error: 'Synchronisation fehlgeschlagen: ' + error.message });
+  } finally {
+    client.release();
   }
 });
 
-// Projekt-Übersicht für Dashboard
-app.get('/api/projects', (req, res) => {
-  const projects = Object.keys(polygonDatabase.projects).map(projectName => {
-    const projectData = polygonDatabase.projects[projectName];
-    const stats = calculateProjectStatistics(projectData);
+// Projekt-Übersicht
+app.get('/api/projects', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        p.*,
+        COUNT(pol.id) as polygon_count
+      FROM projects p
+      LEFT JOIN polygons pol ON p.id = pol.project_id
+      GROUP BY p.id
+      ORDER BY p.updated_at DESC
+    `);
     
-    return {
-      name: projectName,
-      ...stats,
-      lastUpdate: projectData.data.length > 0 ? 
-        Math.max(...projectData.data.map(p => new Date(p.lastUpdate || 0))) : null
-    };
-  });
-  
-  res.json({
-    projects: projects,
-    totalProjects: projects.length,
-    lastSync: polygonDatabase.lastSync
-  });
+    const projects = [];
+    
+    for (const project of result.rows) {
+      const stats = await calculateProjectStatistics(project.id);
+      
+      projects.push({
+        name: project.name,
+        ...stats,
+        lastUpdate: project.updated_at
+      });
+    }
+    
+    res.json({
+      projects: projects,
+      totalProjects: projects.length,
+      lastSync: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Fehler beim Laden der Projekte:', error);
+    res.status(500).json({ error: 'Serverfehler' });
+  }
 });
 
 // Detaillierte Projekt-Daten
-app.get('/api/project/:projectName', (req, res) => {
+app.get('/api/project/:projectName', async (req, res) => {
   const { projectName } = req.params;
   
-  if (!polygonDatabase.projects[projectName]) {
-    return res.status(404).json({ error: 'Projekt nicht gefunden' });
+  try {
+    const projectResult = await pool.query(`
+      SELECT * FROM projects WHERE name = $1
+    `, [projectName]);
+    
+    if (projectResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Projekt nicht gefunden' });
+    }
+    
+    const project = projectResult.rows[0];
+    
+    // Polygon-Daten abrufen
+    const polygonsResult = await pool.query(`
+      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry, 
+             created_at, updated_at, source
+      FROM polygons 
+      WHERE project_id = $1
+      ORDER BY updated_at DESC
+    `, [project.id]);
+    
+    const stats = await calculateProjectStatistics(project.id);
+    
+    res.json({
+      projectName: project.name,
+      info: {
+        projectName: project.name,
+        colorWorkers: project.color_workers,
+        workerPercentages: project.worker_percentages,
+        sessionInfo: project.session_info
+      },
+      data: polygonsResult.rows,
+      statistics: stats,
+      lastSync: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Fehler beim Laden des Projekts:', error);
+    res.status(500).json({ error: 'Serverfehler' });
   }
-  
-  const projectData = polygonDatabase.projects[projectName];
-  const stats = calculateProjectStatistics(projectData);
-  
-  res.json({
-    projectName: projectName,
-    info: projectData.info,
-    data: projectData.data,
-    statistics: stats,
-    lastSync: polygonDatabase.lastSync
-  });
 });
 
 // Legacy Endpoints für Rückwärtskompatibilität
-app.get('/api/data/:layerName', (req, res) => {
+app.get('/api/data/:layerName', async (req, res) => {
   const { layerName } = req.params;
   
-  if (!polygonDatabase.projects[layerName]) {
-    return res.status(404).json({ error: 'Layer nicht gefunden' });
+  try {
+    const projectResult = await pool.query(`
+      SELECT id FROM projects WHERE name = $1
+    `, [layerName]);
+    
+    if (projectResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Layer nicht gefunden' });
+    }
+    
+    const polygonsResult = await pool.query(`
+      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry
+      FROM polygons 
+      WHERE project_id = $1
+    `, [projectResult.rows[0].id]);
+    
+    res.json({
+      layerName: layerName,
+      data: polygonsResult.rows,
+      lastSync: new Date().toISOString(),
+      count: polygonsResult.rows.length
+    });
+    
+  } catch (error) {
+    console.error('Fehler beim Laden der Layer-Daten:', error);
+    res.status(500).json({ error: 'Serverfehler' });
   }
-  
-  res.json({
-    layerName: layerName,
-    data: polygonDatabase.projects[layerName].data,
-    lastSync: polygonDatabase.lastSync,
-    count: polygonDatabase.projects[layerName].data.length
-  });
 });
 
-app.get('/api/layers', (req, res) => {
-  const layers = Object.keys(polygonDatabase.projects).map(projectName => ({
-    name: projectName,
-    polygonCount: polygonDatabase.projects[projectName].data.length,
-    lastUpdate: polygonDatabase.projects[projectName].data.length > 0 ? 
-      Math.max(...polygonDatabase.projects[projectName].data.map(p => new Date(p.lastUpdate || 0))) : null
-  }));
-  
-  res.json({
-    layers: layers,
-    totalLayers: layers.length,
-    lastSync: polygonDatabase.lastSync
-  });
+app.get('/api/layers', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        p.name,
+        COUNT(pol.id) as polygon_count,
+        MAX(pol.updated_at) as last_update
+      FROM projects p
+      LEFT JOIN polygons pol ON p.id = pol.project_id
+      GROUP BY p.id, p.name
+      ORDER BY p.updated_at DESC
+    `);
+    
+    res.json({
+      layers: result.rows.map(row => ({
+        name: row.name,
+        polygonCount: parseInt(row.polygon_count),
+        lastUpdate: row.last_update
+      })),
+      totalLayers: result.rows.length,
+      lastSync: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Fehler beim Laden der Layer:', error);
+    res.status(500).json({ error: 'Serverfehler' });
+  }
 });
 
-// Haupt-Dashboard Route
+// Simple Dashboard
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -313,496 +605,190 @@ app.get('/', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QField Projekt Dashboard</title>
+    <title>QField PostgreSQL Dashboard</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            background: #f5f5f5; 
         }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
         }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
+        .header { 
+            text-align: center; 
+            margin-bottom: 30px; 
         }
-        
-        .header {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            text-align: center;
-            margin-bottom: 30px;
+        .status { 
+            padding: 10px; 
+            border-radius: 5px; 
+            margin-bottom: 20px; 
+            text-align: center; 
+            font-weight: bold; 
         }
-        
-        .header h1 {
-            color: #333;
-            margin-bottom: 10px;
-            font-size: 2.5em;
+        .status.online { 
+            background: #d4edda; 
+            color: #155724; 
         }
-        
-        .project-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+        .status.offline { 
+            background: #f8d7da; 
+            color: #721c24; 
         }
-        
-        .project-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: 3px solid transparent;
+        .projects { 
+            margin-top: 20px; 
         }
-        
-        .project-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
-            border-color: #667eea;
+        .project-card { 
+            border: 1px solid #ddd; 
+            border-radius: 5px; 
+            padding: 15px; 
+            margin-bottom: 10px; 
         }
-        
-        .project-name {
-            font-size: 1.4em;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 15px;
+        .project-header { 
+            font-weight: bold; 
+            font-size: 1.2em; 
+            margin-bottom: 10px; 
         }
-        
-        .progress-container {
-            background: #f0f0f0;
-            border-radius: 10px;
-            height: 25px;
-            margin-bottom: 15px;
-            overflow: hidden;
-            position: relative;
+        .project-stats { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+            gap: 10px; 
         }
-        
-        .progress-bar {
-            height: 100%;
-            background: linear-gradient(45deg, #4CAF50, #45a049);
-            border-radius: 10px;
-            transition: width 0.8s ease;
-            position: relative;
+        .stat { 
+            text-align: center; 
+            padding: 10px; 
+            background: #f8f9fa; 
+            border-radius: 3px; 
         }
-        
-        .progress-text {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-weight: bold;
-            font-size: 0.9em;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        .stat-number { 
+            font-size: 1.5em; 
+            font-weight: bold; 
+            color: #007bff; 
         }
-        
-        .project-stats {
-            display: flex;
-            justify-content: space-between;
-            color: #666;
-            font-size: 0.9em;
+        .btn { 
+            background: #007bff; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            margin: 5px; 
         }
-        
-        .stat-item {
-            text-align: center;
-        }
-        
-        .stat-number {
-            font-size: 1.2em;
-            font-weight: bold;
-            color: #333;
-        }
-        
-        .back-button {
-            background: linear-gradient(45deg, #2196F3, #1976D2);
-            color: white;
-            border: none;
-            padding: 12px 25px;
-            font-size: 1em;
-            border-radius: 25px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            transition: all 0.3s ease;
-            box-shadow: 0 5px 15px rgba(33, 150, 243, 0.3);
-        }
-        
-        .back-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 7px 20px rgba(33, 150, 243, 0.4);
-        }
-        
-        .project-detail {
-            display: none;
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-        }
-        
-        .overall-progress {
-            margin-bottom: 30px;
-        }
-        
-        .worker-progress {
-            display: flex;
-            height: 40px;
-            border-radius: 20px;
-            overflow: hidden;
-            margin-bottom: 20px;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .worker-segment {
-            transition: all 0.3s ease;
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            color: white;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
-        }
-        
-        .worker-tabs {
-            display: flex;
-            gap: 5px;
-            margin-bottom: 20px;
-        }
-        
-        .worker-tab {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 25px;
-            cursor: pointer;
-            font-weight: bold;
-            color: white;
-            transition: all 0.3s ease;
-            min-width: 120px;
-        }
-        
-        .worker-tab.active {
-            transform: scale(1.05);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        
-        .worker-detail {
-            background: #f9f9f9;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        
-        .chronology-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }
-        
-        .chronology-table th,
-        .chronology-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        
-        .chronology-table th {
-            background-color: #f5f5f5;
-            font-weight: bold;
-        }
-        
-        .chronology-table tr:hover {
-            background-color: #f0f0f0;
-        }
-        
-        .summary-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }
-        
-        .summary-card {
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
-        .summary-number {
-            font-size: 2em;
-            font-weight: bold;
-            color: #2196F3;
-        }
-        
-        .summary-label {
-            color: #666;
-            margin-top: 5px;
-        }
-        
-        .hidden {
-            display: none;
+        .btn:hover { 
+            background: #0056b3; 
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Dashboard Übersicht -->
-        <div id="dashboard">
-            <div class="header">
-                <h1>🏗️ QField Projekt Dashboard</h1>
-                <p>Übersicht aller Projekte und deren Fortschritt</p>
-            </div>
-            
-            <div id="projectGrid" class="project-grid">
-                <!-- Projekte werden hier dynamisch geladen -->
-            </div>
+        <div class="header">
+            <h1>🐘 QField PostgreSQL Dashboard</h1>
+            <p>Modernisierte Version mit PostgreSQL Backend</p>
         </div>
         
-        <!-- Projekt Detail Ansicht -->
-        <div id="projectDetail" class="project-detail">
-            <button class="back-button" onclick="showDashboard()">← Zurück zur Übersicht</button>
-            
-            <h2 id="projectTitle">Projekt Details</h2>
-            
-            <div class="overall-progress">
-                <h3>Gesamtfortschritt nach Bearbeitern</h3>
-                <div id="workerProgress" class="worker-progress">
-                    <!-- Worker-Segmente werden hier eingefügt -->
-                </div>
-            </div>
-            
-            <div id="workerTabs" class="worker-tabs">
-                <!-- Tabs werden hier eingefügt -->
-            </div>
-            
-            <div id="workerDetail" class="worker-detail">
-                <!-- Details werden hier angezeigt -->
-            </div>
-            
-            <div class="summary-stats" id="summaryStats">
-                <!-- Zusammenfassung wird hier angezeigt -->
-            </div>
+        <div id="status" class="status">
+            Lade Status...
+        </div>
+        
+        <div class="projects" id="projects">
+            Lade Projekte...
+        </div>
+        
+        <div style="text-align: center; margin-top: 30px;">
+            <button class="btn" onclick="loadData()">Aktualisieren</button>
+            <button class="btn" onclick="testConnection()">Verbindung testen</button>
         </div>
     </div>
 
     <script>
-        let currentProject = null;
-        let currentWorker = null;
-        
-        function getColorStyle(colorCode) {
-            switch(colorCode) {
-                case 'r': return '#f44336';
-                case 'g': return '#4CAF50';
-                case 'b': return '#2196F3';
-                case 'y': return '#FFEB3B';
-                default: return '#e0e0e0';
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                const statusDiv = document.getElementById('status');
+                
+                statusDiv.className = data.status ? 'status online' : 'status offline';
+                statusDiv.textContent = data.status ? 
+                    'System Online ✅' : 'System Offline ❌';
+            } catch (error) {
+                document.getElementById('status').innerHTML = 
+                    '<div class="status offline">Verbindungsfehler ❌</div>';
             }
         }
         
-        function getColorName(colorCode) {
-            switch(colorCode) {
-                case 'r': return 'Rot';
-                case 'g': return 'Grün';
-                case 'b': return 'Blau';
-                case 'y': return 'Gelb';
-                default: return 'Unbekannt';
-            }
-        }
-        
-        function loadProjects() {
-            fetch('/api/projects')
-                .then(response => response.json())
-                .then(data => {
-                    const grid = document.getElementById('projectGrid');
-                    
-                    if (data.projects.length === 0) {
-                        grid.innerHTML = '<div style="text-align: center; color: white; font-size: 1.2em;">Keine Projekte gefunden</div>';
-                        return;
-                    }
-                    
-                    grid.innerHTML = '';
-                    
-                    data.projects.forEach(project => {
-                        const card = document.createElement('div');
-                        card.className = 'project-card';
-                        card.onclick = () => showProject(project.name);
-                        
-                        card.innerHTML = \`
-                            <div class="project-name">\${project.name}</div>
-                            <div class="progress-container">
-                                <div class="progress-bar" style="width: \${project.completionPercentage}%">
-                                    <div class="progress-text">\${project.completionPercentage.toFixed(1)}%</div>
-                                </div>
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                const data = await response.json();
+                const projectsDiv = document.getElementById('projects');
+                
+                if (data.projects.length === 0) {
+                    projectsDiv.innerHTML = '<p>Keine Projekte gefunden</p>';
+                    return;
+                }
+                
+                projectsDiv.innerHTML = '<h2>Projekte (' + data.totalProjects + ')</h2>';
+                
+                data.projects.forEach(project => {
+                    const card = document.createElement('div');
+                    card.className = 'project-card';
+                    card.innerHTML = \`
+                        <div class="project-header">\${project.name}</div>
+                        <div class="project-stats">
+                            <div class="stat">
+                                <div class="stat-number">\${project.totalPolygons}</div>
+                                <div>Polygone</div>
                             </div>
-                            <div class="project-stats">
-                                <div class="stat-item">
-                                    <div class="stat-number">\${project.completedPolygons}/\${project.totalPolygons}</div>
-                                    <div>Polygone</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-number">\${project.completedArea.toFixed(1)} ha</div>
-                                    <div>Bearbeitet</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-number">\${project.participantCount}</div>
-                                    <div>Beteiligte</div>
-                                </div>
+                            <div class="stat">
+                                <div class="stat-number">\${project.completedPolygons}</div>
+                                <div>Bearbeitet</div>
                             </div>
-                        \`;
-                        
-                        grid.appendChild(card);
-                    });
-                })
-                .catch(error => {
-                    console.error('Fehler beim Laden der Projekte:', error);
-                    document.getElementById('projectGrid').innerHTML = 
-                        '<div style="text-align: center; color: white; font-size: 1.2em;">Fehler beim Laden der Projekte</div>';
+                            <div class="stat">
+                                <div class="stat-number">\${project.totalArea.toFixed(1)}</div>
+                                <div>Gesamtfläche (ha)</div>
+                            </div>
+                            <div class="stat">
+                                <div class="stat-number">\${project.completionPercentage.toFixed(1)}%</div>
+                                <div>Fortschritt</div>
+                            </div>
+                        </div>
+                    \`;
+                    projectsDiv.appendChild(card);
                 });
-        }
-        
-        function showProject(projectName) {
-            fetch(\`/api/project/\${projectName}\`)
-                .then(response => response.json())
-                .then(data => {
-                    currentProject = data;
-                    
-                    document.getElementById('dashboard').style.display = 'none';
-                    document.getElementById('projectDetail').style.display = 'block';
-                    document.getElementById('projectTitle').textContent = data.projectName;
-                    
-                    // Gesamt-Fortschrittsbalken erstellen
-                    const workerProgress = document.getElementById('workerProgress');
-                    workerProgress.innerHTML = '';
-                    
-                    Object.values(data.statistics.workerStats).forEach(worker => {
-                        const segment = document.createElement('div');
-                        segment.className = 'worker-segment';
-                        segment.style.backgroundColor = getColorStyle(worker.color);
-                        segment.style.width = \`\${worker.percentage}%\`;
-                        segment.textContent = worker.percentage > 5 ? \`\${worker.name} \${worker.percentage.toFixed(1)}%\` : '';
-                        workerProgress.appendChild(segment);
-                    });
-                    
-                    // Worker Tabs erstellen
-                    const tabsContainer = document.getElementById('workerTabs');
-                    tabsContainer.innerHTML = '';
-                    
-                    Object.values(data.statistics.workerStats).forEach((worker, index) => {
-                        const tab = document.createElement('button');
-                        tab.className = 'worker-tab' + (index === 0 ? ' active' : '');
-                        tab.style.backgroundColor = getColorStyle(worker.color);
-                        tab.textContent = worker.name;
-                        tab.onclick = () => showWorkerDetail(worker, tab);
-                        tabsContainer.appendChild(tab);
-                    });
-                    
-                    // Ersten Worker anzeigen
-                    if (Object.values(data.statistics.workerStats).length > 0) {
-                        showWorkerDetail(Object.values(data.statistics.workerStats)[0], tabsContainer.firstChild);
-                    }
-                    
-                    // Zusammenfassungsstatistiken
-                    updateSummaryStats(data.statistics);
-                })
-                .catch(error => {
-                    console.error('Fehler beim Laden des Projekts:', error);
-                });
-        }
-        
-        function showWorkerDetail(worker, tabElement) {
-            // Tab-Status aktualisieren
-            document.querySelectorAll('.worker-tab').forEach(tab => tab.classList.remove('active'));
-            tabElement.classList.add('active');
-            
-            const detailContainer = document.getElementById('workerDetail');
-            
-            let chronologyHtml = '';
-            if (worker.chronology.length > 0) {
-                chronologyHtml = \`
-                    <h4>Chronologie (neueste zuerst)</h4>
-                    <table class="chronology-table">
-                        <thead>
-                            <tr>
-                                <th>Datum</th>
-                                <th>Polygon ID</th>
-                                <th>Fläche (ha)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            \${worker.chronology.map(entry => \`
-                                <tr>
-                                    <td>\${entry.datum}</td>
-                                    <td>\${entry.id}</td>
-                                    <td>\${entry.area.toFixed(2)}</td>
-                                </tr>
-                            \`).join('')}
-                        </tbody>
-                    </table>
-                \`;
-            } else {
-                chronologyHtml = '<div style="text-align: center; color: #666; padding: 20px;">Keine Bearbeitungen von diesem Bearbeiter</div>';
+                
+            } catch (error) {
+                document.getElementById('projects').innerHTML = 
+                    '<p>Fehler beim Laden der Projekte</p>';
             }
-            
-            detailContainer.innerHTML = \`
-                <h3 style="color: \${getColorStyle(worker.color)};">\${worker.name}</h3>
-                <div style="margin-bottom: 20px;">
-                    <strong>Gesamtfläche:</strong> \${worker.area.toFixed(2)} ha (\${worker.percentage.toFixed(1)}% des Projekts)<br>
-                    <strong>Anzahl Polygone:</strong> \${worker.polygonCount}
-                </div>
-                \${chronologyHtml}
-            \`;
         }
         
-        function updateSummaryStats(stats) {
-            const container = document.getElementById('summaryStats');
-            container.innerHTML = \`
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.totalArea.toFixed(1)}</div>
-                    <div class="summary-label">Gesamtfläche (ha)</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.completedArea.toFixed(1)}</div>
-                    <div class="summary-label">Bearbeitete Fläche (ha)</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.completionAreaPercentage.toFixed(1)}%</div>
-                    <div class="summary-label">Flächenanteil abgeschlossen</div>
-                </div>
-                <div class="summary-card">
-                    <div class="summary-number">\${stats.completedPolygons}/\${stats.totalPolygons}</div>
-                    <div class="summary-label">Polygone abgeschlossen</div>
-                </div>
-            \`;
+        async function loadData() {
+            await loadStatus();
+            await loadProjects();
         }
         
-        function showDashboard() {
-            document.getElementById('projectDetail').style.display = 'none';
-            document.getElementById('dashboard').style.display = 'block';
-            currentProject = null;
+        async function testConnection() {
+            try {
+                const response = await fetch('/api/projects');
+                if (response.ok) {
+                    alert('✅ Datenbankverbindung erfolgreich!');
+                } else {
+                    alert('❌ Datenbankverbindung fehlgeschlagen!');
+                }
+            } catch (error) {
+                alert('❌ Verbindungsfehler: ' + error.message);
+            }
         }
         
         // Initial laden
-        loadProjects();
+        loadData();
         
         // Auto-refresh alle 30 Sekunden
-        setInterval(() => {
-            if (currentProject) {
-                showProject(currentProject.projectName);
-            } else {
-                loadProjects();
-            }
-        }, 30000);
+        setInterval(loadData, 30000);
     </script>
 </body>
 </html>
@@ -810,17 +796,29 @@ app.get('/', (req, res) => {
 });
 
 // Server starten
-app.listen(PORT, () => {
-  console.log(`
-🚀 Server läuft auf Port ${PORT}
-📊 Webinterface: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
-🔗 API Status: /api/status
-🔄 API Sync: /api/sync
-📋 API Projekte: /api/projects
-🎯 API Projekt Details: /api/project/:projectName
-  `);
-  console.log(`Aktueller Status: ${serverStatus.status ? 'GRÜN' : 'ROT'}`);
-});
+async function startServer() {
+  try {
+    await initializeDatabase();
+    
+    app.listen(PORT, () => {
+      console.log(`
+🚀 PostgreSQL Server läuft auf Port ${PORT}
+🐘 Datenbank: ${process.env.DATABASE_URL ? 'PostgreSQL (Render)' : 'PostgreSQL (Lokal)'}
+📊 Dashboard: ${process.env.NODE_ENV === 'production' ? 'https://qfieldnodejs.onrender.com' : `http://localhost:${PORT}`}
+🔗 API Endpoints:
+   - GET  /api/status
+   - POST /api/status  
+   - POST /api/sync
+   - GET  /api/projects
+   - GET  /api/project/:name
+      `);
+    });
+  } catch (error) {
+    console.error('❌ Server konnte nicht gestartet werden:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 module.exports = app;
- 
