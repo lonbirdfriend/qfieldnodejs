@@ -1,4 +1,4 @@
-// server.js - PostgreSQL Version für QField Synchronisation
+// server.js - PostgreSQL Version für QField Synchronisation mit Datum_von/Datum_bis
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -51,7 +51,7 @@ async function initializeDatabase() {
       )
     `);
 
-    // Polygons Tabelle
+    // Polygons Tabelle - GEÄNDERT: datum_von und datum_bis
     await client.query(`
       CREATE TABLE IF NOT EXISTS polygons (
         id SERIAL PRIMARY KEY,
@@ -59,7 +59,8 @@ async function initializeDatabase() {
         polygon_id VARCHAR(255) NOT NULL,
         flaeche_ha DECIMAL(10,4) DEFAULT 0,
         bearbeitet VARCHAR(255) DEFAULT '',
-        datum VARCHAR(50) DEFAULT '',
+        datum_von VARCHAR(50) DEFAULT '',
+        datum_bis VARCHAR(50) DEFAULT '',
         farbe VARCHAR(10) DEFAULT '',
         geometry TEXT DEFAULT '',
         source VARCHAR(100) DEFAULT 'unknown',
@@ -67,6 +68,24 @@ async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(project_id, polygon_id)
     )`);
+
+    // Migration: Alte datum Spalte zu datum_von migrieren falls vorhanden
+    try {
+      await client.query(`
+        DO $$ 
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'polygons' AND column_name = 'datum') THEN
+            -- Kopiere datum zu datum_von falls datum_von leer ist
+            UPDATE polygons SET datum_von = datum WHERE datum_von = '' AND datum != '';
+            -- Lösche alte datum Spalte
+            ALTER TABLE polygons DROP COLUMN datum;
+          END IF;
+        END $$;
+      `);
+    } catch (migrationError) {
+      console.log('Migration nicht nötig oder bereits durchgeführt');
+    }
 
     // Server Status Tabelle
     await client.query(`
@@ -124,7 +143,8 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
         UPDATE projects 
         SET color_workers = $2, 
             worker_percentages = $3, 
-            session_info = $4
+            session_info = $4,
+            updated_at = CURRENT_TIMESTAMP
         WHERE name = $1
         RETURNING *
       `, [
@@ -151,9 +171,9 @@ async function calculateProjectStatistics(projectId) {
     const statsResult = await client.query(`
       SELECT 
         COUNT(*) as total_polygons,
-        COUNT(CASE WHEN bearbeitet != '' AND datum != '' AND farbe != '' THEN 1 END) as completed_polygons,
+        COUNT(CASE WHEN bearbeitet != '' AND (datum_von != '' OR datum_bis != '') AND farbe != '' THEN 1 END) as completed_polygons,
         COALESCE(SUM(flaeche_ha), 0) as total_area,
-        COALESCE(SUM(CASE WHEN bearbeitet != '' AND datum != '' AND farbe != '' THEN flaeche_ha ELSE 0 END), 0) as completed_area
+        COALESCE(SUM(CASE WHEN bearbeitet != '' AND (datum_von != '' OR datum_bis != '') AND farbe != '' THEN flaeche_ha ELSE 0 END), 0) as completed_area
       FROM polygons 
       WHERE project_id = $1
     `, [projectId]);
@@ -168,15 +188,16 @@ async function calculateProjectStatistics(projectId) {
         COALESCE(SUM(flaeche_ha), 0) as area,
         array_agg(
           json_build_object(
-            'datum', datum,
+            'datum_von', datum_von,
+            'datum_bis', datum_bis,
             'area', flaeche_ha,
             'id', polygon_id
-          ) ORDER BY datum DESC
+          ) ORDER BY updated_at DESC
         ) as chronology
       FROM polygons 
       WHERE project_id = $1 
         AND bearbeitet != '' 
-        AND datum != '' 
+        AND (datum_von != '' OR datum_bis != '')
         AND farbe != ''
       GROUP BY farbe, bearbeitet
     `, [projectId]);
@@ -192,7 +213,7 @@ async function calculateProjectStatistics(projectId) {
         area: parseFloat(worker.area),
         polygonCount: parseInt(worker.polygon_count),
         percentage: percentage,
-        chronology: worker.chronology.filter(entry => entry.datum && entry.area)
+        chronology: worker.chronology.filter(entry => (entry.datum_von || entry.datum_bis) && entry.area)
       };
     });
 
@@ -280,7 +301,7 @@ app.post('/api/status', async (req, res) => {
   }
 });
 
-// Synchronisation
+// Synchronisation - ERWEITERT mit Löschungserkennung
 app.post('/api/sync', async (req, res) => {
   const { action, layerName, data, timestamp, source, projectInfo } = req.body;
   
@@ -300,6 +321,7 @@ app.post('/api/sync', async (req, res) => {
     
     let newCount = 0;
     let updatedCount = 0;
+    let deletedCount = 0;
     
     for (const incomingPolygon of data) {
       if (!incomingPolygon.id) continue;
@@ -324,34 +346,84 @@ app.post('/api/sync', async (req, res) => {
         const existing = existingResult.rows[0];
         const updateFields = [];
         const updateValues = [];
+        let hasChanges = false;
         
-        // Fläche nur aktualisieren wenn wirklich anders (Toleranz für Rundungsfehler)
-        if (flaeche > 0 && Math.abs(parseFloat(existing.flaeche_ha || 0) - parseFloat(flaeche)) > 0.0001) {
-          updateFields.push('flaeche_ha = $' + (updateValues.length + 1));
-          updateValues.push(parseFloat(flaeche));
-        }
+        // NEU: Erkenne Löschungen durch Vergleich
+        const incomingBearbeitet = incomingPolygon.bearbeitet || '';
+        const incomingDatumVon = incomingPolygon.datum_von || '';
+        const incomingDatumBis = incomingPolygon.datum_bis || '';
+        const incomingFarbe = incomingPolygon.farbe || '';
         
-        if (!existing.bearbeitet && incomingPolygon.bearbeitet) {
+        const existingBearbeitet = existing.bearbeitet || '';
+        const existingDatumVon = existing.datum_von || '';
+        const existingDatumBis = existing.datum_bis || '';
+        const existingFarbe = existing.farbe || '';
+        
+        // Prüfe ob Client das Polygon gelöscht hat (Felder wurden geleert)
+        const wasDeleted = (existingBearbeitet !== '' || existingFarbe !== '' || existingDatumVon !== '' || existingDatumBis !== '') &&
+                          (incomingBearbeitet === '' && incomingFarbe === '' && incomingDatumVon === '' && incomingDatumBis === '');
+        
+        if (wasDeleted) {
+          // Client hat gelöscht - übernehme die Löschung
           updateFields.push('bearbeitet = $' + (updateValues.length + 1));
-          updateValues.push(incomingPolygon.bearbeitet);
-        }
-        
-        if (!existing.datum && incomingPolygon.datum) {
-          updateFields.push('datum = $' + (updateValues.length + 1));
-          updateValues.push(incomingPolygon.datum);
-        }
-        
-        if (!existing.farbe && incomingPolygon.farbe) {
+          updateValues.push('');
+          updateFields.push('datum_von = $' + (updateValues.length + 1));
+          updateValues.push('');
+          updateFields.push('datum_bis = $' + (updateValues.length + 1));
+          updateValues.push('');
           updateFields.push('farbe = $' + (updateValues.length + 1));
-          updateValues.push(incomingPolygon.farbe);
+          updateValues.push('');
+          hasChanges = true;
+          deletedCount++;
+          console.log(`Löschung erkannt für Polygon ${incomingPolygon.id}`);
+        } else {
+          // Normale Updates nur für leere Felder (Bidirektionale Sync)
+          
+          // Fläche nur aktualisieren wenn wirklich anders
+          if (flaeche > 0 && Math.abs(parseFloat(existing.flaeche_ha || 0) - parseFloat(flaeche)) > 0.0001) {
+            updateFields.push('flaeche_ha = $' + (updateValues.length + 1));
+            updateValues.push(parseFloat(flaeche));
+            hasChanges = true;
+          }
+          
+          // Bearbeitet: Update wenn Server leer und Client gefüllt ODER Client leer und Server gefüllt (Löschung)
+          if ((!existingBearbeitet && incomingBearbeitet) || (existingBearbeitet && !incomingBearbeitet)) {
+            updateFields.push('bearbeitet = $' + (updateValues.length + 1));
+            updateValues.push(incomingBearbeitet);
+            hasChanges = true;
+          }
+          
+          // Datum_von
+          if ((!existingDatumVon && incomingDatumVon) || (existingDatumVon && !incomingDatumVon)) {
+            updateFields.push('datum_von = $' + (updateValues.length + 1));
+            updateValues.push(incomingDatumVon);
+            hasChanges = true;
+          }
+          
+          // Datum_bis
+          if ((!existingDatumBis && incomingDatumBis) || (existingDatumBis && !incomingDatumBis)) {
+            updateFields.push('datum_bis = $' + (updateValues.length + 1));
+            updateValues.push(incomingDatumBis);
+            hasChanges = true;
+          }
+          
+          // Farbe
+          if ((!existingFarbe && incomingFarbe) || (existingFarbe && !incomingFarbe)) {
+            updateFields.push('farbe = $' + (updateValues.length + 1));
+            updateValues.push(incomingFarbe);
+            hasChanges = true;
+          }
+          
+          // Geometry
+          if (!existing.geometry && incomingPolygon.geometry) {
+            updateFields.push('geometry = $' + (updateValues.length + 1));
+            updateValues.push(incomingPolygon.geometry);
+            hasChanges = true;
+          }
         }
         
-        if (!existing.geometry && incomingPolygon.geometry) {
-          updateFields.push('geometry = $' + (updateValues.length + 1));
-          updateValues.push(incomingPolygon.geometry);
-        }
-        
-        if (updateFields.length > 0) {
+        if (hasChanges) {
+          updateFields.push('updated_at = CURRENT_TIMESTAMP');
           updateFields.push('source = $' + (updateValues.length + 1));
           updateValues.push(source || 'unknown');
           
@@ -366,22 +438,28 @@ app.post('/api/sync', async (req, res) => {
           `;
           
           await client.query(updateQuery, updateValues);
-          updatedCount++;
-          console.log(`Polygon ${incomingPolygon.id} aktualisiert`);
+          
+          if (!wasDeleted) {
+            updatedCount++;
+            console.log(`Polygon ${incomingPolygon.id} aktualisiert`);
+          } else {
+            console.log(`Polygon ${incomingPolygon.id} gelöscht`);
+          }
         }
         
       } else {
         // Neues Polygon einfügen
         await client.query(`
           INSERT INTO polygons (
-            project_id, polygon_id, flaeche_ha, bearbeitet, datum, farbe, geometry, source
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            project_id, polygon_id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, source, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
         `, [
           project.id,
           incomingPolygon.id,
           parseFloat(flaeche) || 0,
           incomingPolygon.bearbeitet || '',
-          incomingPolygon.datum || '',
+          incomingPolygon.datum_von || '',
+          incomingPolygon.datum_bis || '',
           incomingPolygon.farbe || '',
           incomingPolygon.geometry || '',
           source || 'unknown'
@@ -394,14 +472,15 @@ app.post('/api/sync', async (req, res) => {
     
     // Alle Polygone für Rückgabe abrufen
     const allPolygonsResult = await client.query(`
-      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry
+      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, updated_at
       FROM polygons 
       WHERE project_id = $1
+      ORDER BY updated_at DESC
     `, [project.id]);
     
     await client.query('COMMIT');
     
-    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
+    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gelöscht: ${deletedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
     
     res.json({
       success: true,
@@ -410,6 +489,7 @@ app.post('/api/sync', async (req, res) => {
         totalPolygons: allPolygonsResult.rows.length,
         newPolygons: newCount,
         updatedPolygons: updatedCount,
+        deletedPolygons: deletedCount,
         lastSync: new Date().toISOString()
       },
       serverData: allPolygonsResult.rows
@@ -476,8 +556,8 @@ app.get('/api/project/:projectName', async (req, res) => {
     
     const project = projectResult.rows[0];
     
-    const polygonsResult = await pool.query(`
-      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry, 
+    const polygonsResult = await client.query(`
+      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, 
              created_at, updated_at, source
       FROM polygons 
       WHERE project_id = $1
@@ -519,7 +599,7 @@ app.get('/api/data/:layerName', async (req, res) => {
     }
     
     const polygonsResult = await pool.query(`
-      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum, farbe, geometry
+      SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry
       FROM polygons 
       WHERE project_id = $1
     `, [projectResult.rows[0].id]);
@@ -656,7 +736,7 @@ app.get('/', (req, res) => {
     <div class="container">
         <div class="header">
             <h1>QField PostgreSQL Dashboard</h1>
-            <p>Modernisierte Version mit PostgreSQL Backend</p>
+            <p>Mit Datum_von/Datum_bis und Löschungserkennung</p>
         </div>
         
         <div id="status" class="status">
@@ -776,12 +856,13 @@ async function startServer() {
       console.log(`
 PostgreSQL Server läuft auf Port ${PORT}
 Datenbank: PostgreSQL (${process.env.NODE_ENV === 'production' ? 'Render' : 'Lokal'})
+Features: Datum_von/Datum_bis + Löschungserkennung
 Dashboard: ${process.env.NODE_ENV === 'production' ? `https://${process.env.RENDER_SERVICE_NAME || 'qfieldnodejs'}.onrender.com` : `http://localhost:${PORT}`}
 Health Check: /health
 API Endpoints:
    - GET  /api/status
    - POST /api/status  
-   - POST /api/sync
+   - POST /api/sync (mit Löschungserkennung)
    - GET  /api/projects
    - GET  /api/project/:name
       `);
