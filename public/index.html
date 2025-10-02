@@ -435,16 +435,38 @@
 
         async function showProjectDetail(projectName) {
             try {
-                const response = await fetch(`/api/project/${encodeURIComponent(projectName)}`);
-                const project = await response.json();
-                currentProject = project;
+                document.getElementById('detail-content').innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Lade Projektdetails...</p>
+                    </div>
+                `;
                 
                 document.getElementById('projects-view').style.display = 'none';
                 document.getElementById('detail-view').classList.add('active');
                 
+                const response = await fetch(`/api/project/${encodeURIComponent(projectName)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const project = await response.json();
+                currentProject = project;
+                
                 renderProjectDetail(project);
             } catch (error) {
                 console.error('Fehler beim Laden der Projektdetails:', error);
+                document.getElementById('detail-content').innerHTML = `
+                    <div class="chart-container">
+                        <p style="color: #ef4444; text-align: center;">
+                            Fehler beim Laden der Projektdetails: ${error.message}
+                        </p>
+                        <p style="color: #8b92b8; text-align: center; margin-top: 16px;">
+                            Bitte überprüfe die Server-Logs für weitere Details.
+                        </p>
+                    </div>
+                `;
             }
         }
 
