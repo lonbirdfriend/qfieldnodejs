@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QField Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0e27;
+            color: #e4e6eb;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            padding: 40px 0;
+            border-bottom: 1px solid #1e2139;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #8b92b8;
+            font-size: 1rem;
+        }
+
+        .projects-grid {
+            display: grid;
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .project-card {
+            background: linear-gradient(135deg, #1a1f3a 0%, #151829 100%);
+            border: 1px solid #252a47;
+            border-radius: 16px;
+            padding: 24px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .project-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .project-card:hover {
+            transform: translateY(-4px);
+            border-color: #667eea;
+            box-shadow: 0 20px 40px rgba(102, 126, 234, 0.2);
+        }
+
+        .project-card:hover::before {
+            opacity: 1;
+        }
+
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .project-name {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #e4e6eb;
+        }
+
+        .project-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 0.875rem;
+            color: #8b92b8;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: #1e2139;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 16px 0;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .worker-segments {
+            display: flex;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+        }
+
+        .worker-segment {
+            height: 100%;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+        }
+
+        .worker-segment:hover {
+            filter: brightness(1.3);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 12px;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 8px;
+            border: 1px solid rgba(102, 126, 234, 0.2);
+        }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #667eea;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #8b92b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+        }
+
+        .detail-view {
+            display: none;
+            animation: fadeIn 0.3s;
+        }
+
+        .detail-view.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .back-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-bottom: 24px;
+            transition: all 0.3s;
+        }
+
+        .back-button:hover {
+            transform: translateX(-4px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .chart-container {
+            background: linear-gradient(135deg, #1a1f3a 0%, #151829 100%);
+            border: 1px solid #252a47;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        .chart-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: #e4e6eb;
+        }
+
+        .worker-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 8px;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+
+        .legend-label {
+            font-size: 0.875rem;
+            color: #e4e6eb;
+        }
+
+        .legend-value {
+            font-size: 0.875rem;
+            color: #8b92b8;
+            margin-left: 4px;
+        }
+
+        .map-container {
+            background: #151829;
+            border-radius: 16px;
+            padding: 32px;
+            margin-top: 24px;
+            border: 1px solid #252a47;
+        }
+
+        #map {
+            width: 100%;
+            height: 600px;
+        }
+
+        .timeline-container {
+            margin-top: 32px;
+        }
+
+        .timeline-item {
+            display: flex;
+            gap: 16px;
+            padding: 16px;
+            background: rgba(102, 126, 234, 0.05);
+            border-left: 3px solid #667eea;
+            margin-bottom: 12px;
+            border-radius: 0 8px 8px 0;
+            transition: all 0.3s;
+        }
+
+        .timeline-item:hover {
+            background: rgba(102, 126, 234, 0.1);
+            transform: translateX(4px);
+        }
+
+        .timeline-date {
+            font-weight: 600;
+            color: #667eea;
+            min-width: 120px;
+        }
+
+        .timeline-content {
+            flex: 1;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #8b92b8;
+        }
+
+        .spinner {
+            border: 3px solid #1e2139;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        svg text {
+            fill: #e4e6eb;
+        }
+
+        .axis path,
+        .axis line {
+            stroke: #252a47;
+        }
+
+        .grid line {
+            stroke: #1e2139;
+            stroke-opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>QField Dashboard</h1>
+            <p class="subtitle">Projektübersicht und Statistiken</p>
+        </header>
+
+        <div id="projects-view">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Lade Projekte...</p>
+            </div>
+        </div>
+
+        <div id="detail-view" class="detail-view">
+            <button class="back-button" onclick="showProjectsList()">← Zurück zur Übersicht</button>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+
+    <script>
+        let projectsData = [];
+        let currentProject = null;
+
+        const colorMap = {
+            'r': '#ef4444',
+            'g': '#10b981',
+            'b': '#3b82f6',
+            'y': '#f59e0b'
+        };
+
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                const data = await response.json();
+                projectsData = data.projects;
+                renderProjectsList(projectsData);
+            } catch (error) {
+                document.getElementById('projects-view').innerHTML = 
+                    '<div class="loading"><p>Fehler beim Laden der Projekte</p></div>';
+            }
+        }
+
+        function renderProjectsList(projects) {
+            const container = document.getElementById('projects-view');
+            
+            if (projects.length === 0) {
+                container.innerHTML = '<div class="loading"><p>Keine Projekte vorhanden</p></div>';
+                return;
+            }
+
+            const html = projects.map(project => {
+                const workers = Object.values(project.workerStats || {});
+                const completionPct = project.completionAreaPercentage || 0;
+                
+                let workerSegmentsHtml = '';
+                if (workers.length > 0) {
+                    workerSegmentsHtml = workers.map(worker => 
+                        `<div class="worker-segment" 
+                              style="width: ${worker.percentage}%; 
+                                     background: ${colorMap[worker.color] || '#667eea'}"
+                              title="${worker.name}: ${worker.percentage.toFixed(1)}%">
+                         </div>`
+                    ).join('');
+                }
+
+                return `
+                    <div class="project-card" onclick="showProjectDetail('${project.name}')">
+                        <div class="project-header">
+                            <div class="project-name">${project.name}</div>
+                            <div class="project-meta">
+                                <span>${workers.length} Mitarbeiter</span>
+                                <span>${new Date(project.lastUpdate).toLocaleDateString('de-DE')}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="progress-bar">
+                            ${workerSegmentsHtml || `<div class="progress-fill" style="width: ${completionPct}%"></div>`}
+                        </div>
+                        
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-value">${project.totalPolygons}</span>
+                                <span class="stat-label">Polygone</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${project.completedPolygons}</span>
+                                <span class="stat-label">Bearbeitet</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${project.totalArea.toFixed(1)}</span>
+                                <span class="stat-label">Hektar</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-value">${completionPct.toFixed(1)}%</span>
+                                <span class="stat-label">Fortschritt</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `<div class="projects-grid">${html}</div>`;
+        }
+
+        async function showProjectDetail(projectName) {
+            try {
+                const response = await fetch(`/api/project/${encodeURIComponent(projectName)}`);
+                const project = await response.json();
+                currentProject = project;
+                
+                document.getElementById('projects-view').style.display = 'none';
+                document.getElementById('detail-view').classList.add('active');
+                
+                renderProjectDetail(project);
+            } catch (error) {
+                console.error('Fehler beim Laden der Projektdetails:', error);
+            }
+        }
+
+        function showProjectsList() {
+            document.getElementById('projects-view').style.display = 'block';
+            document.getElementById('detail-view').classList.remove('active');
+            currentProject = null;
+        }
+
+        function renderProjectDetail(project) {
+            const container = document.getElementById('detail-content');
+            const stats = project.statistics;
+            const workers = Object.values(stats.workerStats || {});
+            
+            container.innerHTML = `
+                <div class="chart-container">
+                    <div class="chart-title">${project.projectName} - Übersicht</div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-value">${stats.totalPolygons}</span>
+                            <span class="stat-label">Gesamt Polygone</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">${stats.completedPolygons}</span>
+                            <span class="stat-label">Bearbeitet</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">${stats.totalArea.toFixed(2)}</span>
+                            <span class="stat-label">Hektar Gesamt</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value">${stats.completedArea.toFixed(2)}</span>
+                            <span class="stat-label">Hektar Bearbeitet</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <div class="chart-title">Mitarbeiterverteilung</div>
+                    <div id="worker-chart"></div>
+                    <div class="worker-legend" id="worker-legend"></div>
+                </div>
+
+                <div class="chart-container">
+                    <div class="chart-title">Chronologischer Verlauf</div>
+                    <div id="timeline-chart"></div>
+                </div>
+
+                <div class="map-container">
+                    <div class="chart-title">Kartenansicht</div>
+                    <div id="map"></div>
+                </div>
+            `;
+
+            renderWorkerChart(workers);
+            renderTimeline(workers);
+            renderMap(project.data);
+        }
+
+        function renderWorkerChart(workers) {
+            const width = 800;
+            const height = 400;
+            const margin = {top: 20, right: 30, bottom: 40, left: 60};
+
+            const svg = d3.select('#worker-chart')
+                .append('svg')
+                .attr('width', '100%')
+                .attr('height', height)
+                .attr('viewBox', `0 0 ${width} ${height}`);
+
+            const x = d3.scaleBand()
+                .domain(workers.map(w => w.name))
+                .range([margin.left, width - margin.right])
+                .padding(0.3);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(workers, w => w.area) * 1.1])
+                .nice()
+                .range([height - margin.bottom, margin.top]);
+
+            svg.selectAll('rect')
+                .data(workers)
+                .join('rect')
+                .attr('x', d => x(d.name))
+                .attr('y', height - margin.bottom)
+                .attr('width', x.bandwidth())
+                .attr('height', 0)
+                .attr('fill', d => colorMap[d.color] || '#667eea')
+                .attr('rx', 4)
+                .transition()
+                .duration(1000)
+                .attr('y', d => y(d.area))
+                .attr('height', d => height - margin.bottom - y(d.area));
+
+            svg.append('g')
+                .attr('transform', `translate(0,${height - margin.bottom})`)
+                .call(d3.axisBottom(x))
+                .selectAll('text')
+                .attr('transform', 'rotate(-45)')
+                .style('text-anchor', 'end');
+
+            svg.append('g')
+                .attr('transform', `translate(${margin.left},0)`)
+                .call(d3.axisLeft(y).ticks(5))
+                .call(g => g.select('.domain').remove())
+                .call(g => g.selectAll('.tick line').clone()
+                    .attr('x2', width - margin.left - margin.right)
+                    .attr('stroke-opacity', 0.1));
+
+            const legend = d3.select('#worker-legend');
+            workers.forEach(worker => {
+                legend.append('div')
+                    .attr('class', 'legend-item')
+                    .html(`
+                        <div class="legend-color" style="background: ${colorMap[worker.color]}"></div>
+                        <span class="legend-label">${worker.name}</span>
+                        <span class="legend-value">${worker.area.toFixed(2)} ha (${worker.percentage.toFixed(1)}%)</span>
+                    `);
+            });
+        }
+
+        function renderTimeline(workers) {
+            const timeline = document.getElementById('timeline-chart');
+            const allEntries = [];
+
+            workers.forEach(worker => {
+                if (worker.chronology) {
+                    worker.chronology.forEach(entry => {
+                        if (entry.datum_von || entry.datum_bis) {
+                            allEntries.push({
+                                date: entry.datum_von || entry.datum_bis,
+                                worker: worker.name,
+                                color: worker.color,
+                                area: entry.area,
+                                id: entry.id
+                            });
+                        }
+                    });
+                }
+            });
+
+            allEntries.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            const html = allEntries.map(entry => `
+                <div class="timeline-item">
+                    <div class="timeline-date">${new Date(entry.date).toLocaleDateString('de-DE')}</div>
+                    <div class="timeline-content">
+                        <div style="color: ${colorMap[entry.color]}; font-weight: 600;">${entry.worker}</div>
+                        <div style="color: #8b92b8; font-size: 0.875rem;">
+                            Polygon ${entry.id} - ${entry.area.toFixed(2)} ha
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            timeline.innerHTML = `<div class="timeline-container">${html || '<p style="color: #8b92b8;">Keine chronologischen Daten verfügbar</p>'}</div>`;
+        }
+
+        function renderMap(polygons) {
+            const mapDiv = document.getElementById('map');
+            
+            if (!polygons || polygons.length === 0) {
+                mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
+                return;
+            }
+
+            const validPolygons = polygons.filter(p => p.geometry && p.geometry.trim() !== '');
+            
+            if (validPolygons.length === 0) {
+                mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
+                return;
+            }
+
+            const width = mapDiv.clientWidth;
+            const height = 600;
+
+            const svg = d3.select('#map')
+                .append('svg')
+                .attr('width', '100%')
+                .attr('height', height)
+                .attr('viewBox', `0 0 ${width} ${height}`);
+
+            const coordinates = [];
+            validPolygons.forEach(poly => {
+                const matches = poly.geometry.match(/[\d.]+/g);
+                if (matches) {
+                    for (let i = 0; i < matches.length; i += 2) {
+                        coordinates.push([parseFloat(matches[i]), parseFloat(matches[i + 1])]);
+                    }
+                }
+            });
+
+            if (coordinates.length === 0) {
+                mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Konnte Koordinaten nicht verarbeiten</p>';
+                return;
+            }
+
+            const xExtent = d3.extent(coordinates, d => d[0]);
+            const yExtent = d3.extent(coordinates, d => d[1]);
+
+            const xScale = d3.scaleLinear()
+                .domain(xExtent)
+                .range([50, width - 50]);
+
+            const yScale = d3.scaleLinear()
+                .domain(yExtent)
+                .range([height - 50, 50]);
+
+            validPolygons.forEach(poly => {
+                const matches = poly.geometry.match(/[\d.]+/g);
+                if (!matches) return;
+
+                const points = [];
+                for (let i = 0; i < matches.length; i += 2) {
+                    points.push([xScale(parseFloat(matches[i])), yScale(parseFloat(matches[i + 1]))]);
+                }
+
+                const color = poly.farbe && colorMap[poly.farbe] ? colorMap[poly.farbe] : '#667eea';
+                const opacity = poly.bearbeitet ? 0.7 : 0.2;
+
+                svg.append('path')
+                    .datum(points)
+                    .attr('d', d3.line())
+                    .attr('fill', color)
+                    .attr('stroke', color)
+                    .attr('stroke-width', 2)
+                    .attr('opacity', opacity)
+                    .append('title')
+                    .text(`Polygon ${poly.id}\n${poly.bearbeitet || 'Nicht bearbeitet'}\n${poly.flaeche_ha} ha`);
+            });
+        }
+
+        loadProjects();
+        setInterval(loadProjects, 60000);
+    </script>
+</body>
+</html>
