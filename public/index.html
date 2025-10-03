@@ -759,7 +759,7 @@
             container.append(svg.node());
         }
 
-        // Sunburst: Innerer Ring = worker_percentages als Flächenanteil
+        // Sunburst: Innerer Ring = Soll%, Äußerer Ring = Ist-Daten
         function renderProjectSunburst(projectInfo, workers, stats) {
             const container = document.getElementById('sunburst-chart');
             container.innerHTML = '';
@@ -773,92 +773,101 @@
             const height = 500;
             const radius = Math.min(width, height) / 2;
 
-            // Berechne Gesamtfläche aus aktuellen Daten
-            const totalArea = stats.totalArea || 1;
-
-            // Innerer Ring: worker_percentages als Anteil der Gesamtfläche
-            const settingsData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => {
-                const actualWorker = workers.find(w => w.color === color);
-
-                return {
-                    name: projectInfo.colorWorkers[color] || color,
-                    color: color,
-                    value: percentage, // Verwende direkt den Prozentsatz für korrekte Proportionen
-                    originalPercentage: percentage,
-                    actualValue: actualWorker ? actualWorker.area : 0,
-                    children: actualWorker && actualWorker.chronology ?
-                        actualWorker.chronology.map(entry => ({
-                            name: entry.datum || 'Unbekannt',
-                            value: entry.area,
-                            color: color
-                        })) : []
-                };
-            });
-
-            const hierarchyData = {
-                name: "Projekt",
-                children: settingsData
-            };
-
-            const root = d3.hierarchy(hierarchyData)
-                .sum(d => d.value)
-                .sort((a, b) => b.value - a.value);
-
-            const partition = d3.partition()
-                .size([2 * Math.PI, radius]);
-
-            partition(root);
-
-            const arc = d3.arc()
-                .startAngle(d => d.x0)
-                .endAngle(d => d.x1)
-                .innerRadius(d => d.y0)
-                .outerRadius(d => d.y1);
+            // Erstelle zwei separate Ringe
+            const innerRadius = 60;
+            const middleRadius = 120;
+            const outerRadius = 180;
 
             const svg = d3.create("svg")
                 .attr("width", width)
                 .attr("height", height)
                 .attr("viewBox", [-width / 2, -height / 2, width, height]);
 
-            svg.selectAll("path")
-                .data(root.descendants().filter(d => d.depth > 0))
-                .join("path")
-                .attr("d", arc)
-                .attr("fill", d => {
-                    if (d.data.color && colorMap[d.data.color]) {
-                        return colorMap[d.data.color];
-                    }
-                    return d.depth === 1 ? '#667eea' : '#4facfe';
-                })
-                .attr("opacity", d => d.depth === 1 ? 0.8 : 0.6)
-                .attr("stroke", "#0a0e27")
-                .attr("stroke-width", 2)
-                .style("cursor", "pointer")
-                .on("mouseover", function (event, d) {
-                    d3.select(this).attr("opacity", 1);
+            // INNERER RING: Soll-Anteile aus Settings
+            const sollData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => ({
+                name: projectInfo.colorWorkers[color] || color,
+                color: color,
+                value: percentage,
+                type: 'soll'
+            }));
 
+            const sollPie = d3.pie()
+                .value(d => d.value)
+                .sort(null);
+
+            const sollArc = d3.arc()
+                .innerRadius(innerRadius)
+                .outerRadius(middleRadius);
+
+            svg.selectAll('.soll-arc')
+                .data(sollPie(sollData))
+                .join('path')
+                .attr('class', 'soll-arc')
+                .attr('d', sollArc)
+                .attr('fill', d => colorMap[d.data.color] || '#667eea')
+                .attr('opacity', 0.8)
+                .attr('stroke', '#0a0e27')
+                .attr('stroke-width', 2)
+                .style('cursor', 'pointer')
+                .on('mouseover', function(event, d) {
+                    d3.select(this).attr('opacity', 1);
                     tooltip.transition().duration(200).style('opacity', 1);
-
-                    let tooltipContent = `<strong>${d.data.name}</strong><br/>`;
-                    if (d.depth === 1) {
-                        // Innerer Ring: Zeige geplante Prozente und Ist-Werte
-                        const plannedPercentage = d.data.originalPercentage || (d.value / d3.sum(root.children, c => c.value) * 100);
-                        const actualPercentage = d.data.actualValue ? (d.data.actualValue / totalArea * 100) : 0;
-                        tooltipContent += `Geplant: ${plannedPercentage.toFixed(1)}%<br/>`;
-                        tooltipContent += `Ist: ${d.data.actualValue.toFixed(2)} ha (${actualPercentage.toFixed(1)}%)`;
-                    } else {
-                        // Äußerer Ring: Zeige bearbeitete Fläche
-                        tooltipContent += `${d.value.toFixed(2)} ha<br/>Bearbeitete Fläche`;
-                    }
-
-                    tooltip.html(tooltipContent)
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 10) + 'px');
+                    tooltip.html(`
+                        <strong>${d.data.name}</strong><br/>
+                        Soll-Anteil: ${d.data.value.toFixed(1)}%
+                    `)
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 10) + 'px');
                 })
-                .on("mouseout", function (event, d) {
-                    d3.select(this).attr("opacity", d.depth === 1 ? 0.8 : 0.6);
+                .on('mouseout', function() {
+                    d3.select(this).attr('opacity', 0.8);
                     tooltip.transition().duration(200).style('opacity', 0);
                 });
+
+            // ÄUSSERER RING: Ist-Daten (tatsächlich bearbeitete Flächen)
+            const istData = workers.map(worker => ({
+                name: worker.name,
+                color: worker.color,
+                value: worker.area,
+                type: 'ist'
+            })).filter(d => d.value > 0); // Nur Bearbeiter mit tatsächlichen Daten
+
+            if (istData.length > 0) {
+                const istPie = d3.pie()
+                    .value(d => d.value)
+                    .sort(null);
+
+                const istArc = d3.arc()
+                    .innerRadius(middleRadius + 5)
+                    .outerRadius(outerRadius);
+
+                svg.selectAll('.ist-arc')
+                    .data(istPie(istData))
+                    .join('path')
+                    .attr('class', 'ist-arc')
+                    .attr('d', istArc)
+                    .attr('fill', d => colorMap[d.data.color] || '#667eea')
+                    .attr('opacity', 0.6)
+                    .attr('stroke', '#0a0e27')
+                    .attr('stroke-width', 2)
+                    .style('cursor', 'pointer')
+                    .on('mouseover', function(event, d) {
+                        d3.select(this).attr('opacity', 1);
+                        tooltip.transition().duration(200).style('opacity', 1);
+                        const percentage = (d.data.value / d3.sum(istData, dd => dd.value) * 100).toFixed(1);
+                        tooltip.html(`
+                            <strong>${d.data.name}</strong><br/>
+                            Ist-Fläche: ${d.data.value.toFixed(2)} ha<br/>
+                            Anteil: ${percentage}%
+                        `)
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY - 10) + 'px');
+                    })
+                    .on('mouseout', function() {
+                        d3.select(this).attr('opacity', 0.6);
+                        tooltip.transition().duration(200).style('opacity', 0);
+                    });
+            }
 
             container.append(svg.node());
         }
@@ -868,33 +877,58 @@
             const tabsContainer = document.getElementById('timeline-tabs');
             const contentContainer = document.getElementById('timeline-content');
 
+            console.log('Timeline Debug - Polygons:', polygons.length);
+            console.log('Timeline Debug - Workers:', workers.length);
+
             // Gruppiere Daten nach Bearbeiter und Datum
             const dailyData = {};
 
             polygons.forEach(poly => {
-                if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x' && poly.datum) {
-                    const key = `${poly.datum}_${poly.bearbeitet}`;
-                    if (!dailyData[key]) {
-                        dailyData[key] = {
-                            date: poly.datum,
-                            worker: poly.bearbeitet,
-                            area: 0,
-                            polygonCount: 0,
-                            color: poly.farbe || 'default'
-                        };
+                // Debug: Zeige Polygon-Daten
+                if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x') {
+                    console.log('Processing polygon:', {
+                        id: poly.id,
+                        bearbeitet: poly.bearbeitet,
+                        datum: poly.datum,
+                        farbe: poly.farbe,
+                        flaeche_ha: poly.flaeche_ha
+                    });
+
+                    // Verwende datum falls vorhanden, sonst datum_von oder datum_bis
+                    const date = poly.datum || poly.datum_von || poly.datum_bis;
+                    
+                    if (date) {
+                        const key = `${date}_${poly.bearbeitet}`;
+                        if (!dailyData[key]) {
+                            dailyData[key] = {
+                                date: date,
+                                worker: poly.bearbeitet,
+                                area: 0,
+                                polygonCount: 0,
+                                color: poly.farbe || 'default'
+                            };
+                        }
+                        dailyData[key].area += parseFloat(poly.flaeche_ha || 0);
+                        dailyData[key].polygonCount += 1;
                     }
-                    dailyData[key].area += parseFloat(poly.flaeche_ha || 0);
-                    dailyData[key].polygonCount += 1;
                 }
             });
+
+            console.log('Timeline Debug - Daily Data:', dailyData);
 
             const sortedData = Object.values(dailyData)
                 .sort((a, b) => {
                     // Bessere Datumssortierung
-                    const dateA = new Date(a.date.split('.').reverse().join('-'));
-                    const dateB = new Date(b.date.split('.').reverse().join('-'));
-                    return dateB - dateA;
+                    try {
+                        const dateA = new Date(a.date.split('.').reverse().join('-'));
+                        const dateB = new Date(b.date.split('.').reverse().join('-'));
+                        return dateB - dateA;
+                    } catch (e) {
+                        return 0;
+                    }
                 });
+
+            console.log('Timeline Debug - Sorted Data:', sortedData);
 
             // Erstelle Tabs - verwende alle Bearbeiter aus den Settings
             const allWorkerNames = [];
