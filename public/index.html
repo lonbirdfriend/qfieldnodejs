@@ -672,13 +672,12 @@
                 const scaledCoords = poly.coordinates.map(([px, py]) => [x(px), y(py)]);
                 const pathData = `M${scaledCoords.map(d => d.join(',')).join('L')}Z`;
 
-                let color = '#667eea';
+                let color = '#667eea'; // Default für nicht bearbeitete Bereiche
                 let opacity = 0.4;
 
-                if (poly.farbe && colorMap[poly.farbe]) {
+                // Nur einfärben wenn bearbeitet UND farbe gesetzt
+                if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x' && poly.farbe && colorMap[poly.farbe]) {
                     color = colorMap[poly.farbe];
-                }
-                if (poly.bearbeitet && poly.bearbeitet !== '') {
                     opacity = 0.8;
                 }
 
@@ -779,17 +778,17 @@
 
             // Innerer Ring: worker_percentages als Anteil der Gesamtfläche
             const settingsData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => {
-                const plannedArea = (percentage / 100) * totalArea;
                 const actualWorker = workers.find(w => w.color === color);
 
                 return {
                     name: projectInfo.colorWorkers[color] || color,
                     color: color,
-                    value: plannedArea,
+                    value: percentage, // Verwende direkt den Prozentsatz für korrekte Proportionen
+                    originalPercentage: percentage,
                     actualValue: actualWorker ? actualWorker.area : 0,
                     children: actualWorker && actualWorker.chronology ?
                         actualWorker.chronology.map(entry => ({
-                            name: entry.datum_von || entry.datum_bis || 'Unbekannt',
+                            name: entry.datum || 'Unbekannt',
                             value: entry.area,
                             color: color
                         })) : []
@@ -842,21 +841,17 @@
 
                     let tooltipContent = `<strong>${d.data.name}</strong><br/>`;
                     if (d.depth === 1) {
-                        const percentage = (d.value / totalArea * 100).toFixed(1);
-                        const actualPercentage = d.data.actualValue ? (d.data.actualValue / totalArea * 100).toFixed(1) : '0.0';
-                        tooltipContent += `Geplant: ${d.value.toFixed(2)} ha (${percentage}%)<br/>`;
-                        tooltipContent += `Ist: ${d.data.actualValue.toFixed(2)} ha (${actualPercentage}%)`;
+                        // Innerer Ring: Zeige geplante Prozente und Ist-Werte
+                        const plannedPercentage = d.data.originalPercentage || (d.value / d3.sum(root.children, c => c.value) * 100);
+                        const actualPercentage = d.data.actualValue ? (d.data.actualValue / totalArea * 100) : 0;
+                        tooltipContent += `Geplant: ${plannedPercentage.toFixed(1)}%<br/>`;
+                        tooltipContent += `Ist: ${d.data.actualValue.toFixed(2)} ha (${actualPercentage.toFixed(1)}%)`;
                     } else {
+                        // Äußerer Ring: Zeige bearbeitete Fläche
                         tooltipContent += `${d.value.toFixed(2)} ha<br/>Bearbeitete Fläche`;
                     }
 
                     tooltip.html(tooltipContent)
-                    const displayValue = d.depth === 1 ? `${d.value.toFixed(1)}%` : `${d.value.toFixed(2)} ha`;
-                    tooltip.html(`
-                        <strong>${d.data.name}</strong><br/>
-                        ${displayValue}<br/>
-                        ${d.depth === 1 ? 'Geplanter Anteil' : 'Bearbeitete Fläche'}
-                    `)
                         .style('left', (event.pageX + 10) + 'px')
                         .style('top', (event.pageY - 10) + 'px');
                 })
@@ -868,7 +863,7 @@
             container.append(svg.node());
         }
 
-        // Timeline mit Tabs
+        // Timeline mit Tabs - korrigiert für datum Feld
         function renderTimelineTabs(polygons, workers) {
             const tabsContainer = document.getElementById('timeline-tabs');
             const contentContainer = document.getElementById('timeline-content');
@@ -877,32 +872,29 @@
             const dailyData = {};
 
             polygons.forEach(poly => {
-                if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x') {
-                    const dates = [];
-                    if (poly.datum_von) dates.push(poly.datum_von);
-                    if (poly.datum_bis && poly.datum_bis !== poly.datum_von) dates.push(poly.datum_bis);
-
-                    dates.forEach(date => {
-                        if (date) {
-                            const key = `${date}_${poly.bearbeitet}`;
-                            if (!dailyData[key]) {
-                                dailyData[key] = {
-                                    date: date,
-                                    worker: poly.bearbeitet,
-                                    area: 0,
-                                    polygonCount: 0,
-                                    color: poly.farbe || 'default'
-                                };
-                            }
-                            dailyData[key].area += parseFloat(poly.flaeche_ha || 0);
-                            dailyData[key].polygonCount += 1;
-                        }
-                    });
+                if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x' && poly.datum) {
+                    const key = `${poly.datum}_${poly.bearbeitet}`;
+                    if (!dailyData[key]) {
+                        dailyData[key] = {
+                            date: poly.datum,
+                            worker: poly.bearbeitet,
+                            area: 0,
+                            polygonCount: 0,
+                            color: poly.farbe || 'default'
+                        };
+                    }
+                    dailyData[key].area += parseFloat(poly.flaeche_ha || 0);
+                    dailyData[key].polygonCount += 1;
                 }
             });
 
             const sortedData = Object.values(dailyData)
-                .sort((a, b) => new Date(b.date.split('.').reverse().join('-')) - new Date(a.date.split('.').reverse().join('-')));
+                .sort((a, b) => {
+                    // Bessere Datumssortierung
+                    const dateA = new Date(a.date.split('.').reverse().join('-'));
+                    const dateB = new Date(b.date.split('.').reverse().join('-'));
+                    return dateB - dateA;
+                });
 
             // Erstelle Tabs - verwende alle Bearbeiter aus den Settings
             const allWorkerNames = [];
@@ -934,12 +926,22 @@
                 const filteredData = isGesamt ? sortedData : sortedData.filter(item => item.worker === tab);
 
                 const itemsHtml = filteredData.map(item => {
-                    const color = colorMap[item.color] || '#667eea';
+                    // Finde die richtige Farbe basierend auf dem Bearbeiter
+                    let workerColor = '#667eea';
+                    if (currentProject && currentProject.info && currentProject.info.colorWorkers) {
+                        for (const [colorCode, workerName] of Object.entries(currentProject.info.colorWorkers)) {
+                            if (workerName === item.worker && colorMap[colorCode]) {
+                                workerColor = colorMap[colorCode];
+                                break;
+                            }
+                        }
+                    }
+
                     return `
                         <div class="timeline-item">
                             <div class="timeline-date">${item.date}</div>
                             <div class="timeline-content">
-                                <div class="timeline-worker" style="color: ${color}">
+                                <div class="timeline-worker" style="color: ${workerColor}">
                                     ${item.worker}
                                 </div>
                                 <div class="timeline-details">
