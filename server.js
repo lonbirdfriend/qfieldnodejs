@@ -29,15 +29,15 @@ const pool = new Pool({
 // Datenbankinitialisierung
 async function initializeDatabase() {
   console.log('Teste Datenbankverbindung...');
-  
+
   let client;
   try {
     client = await pool.connect();
     console.log('Datenbankverbindung erfolgreich');
-    
+
     await client.query('SELECT NOW()');
     console.log('Datenbanktest erfolgreich');
-    
+
     // Projects Tabelle
     await client.query(`
       CREATE TABLE IF NOT EXISTS projects (
@@ -106,7 +106,7 @@ async function initializeDatabase() {
     `);
 
     console.log('Datenbank erfolgreich initialisiert');
-    
+
   } catch (error) {
     console.error('Datenbankverbindung fehlgeschlagen:', error.message);
     throw new Error(`Datenbankverbindung fehlgeschlagen: ${error.message}`);
@@ -118,7 +118,7 @@ async function initializeDatabase() {
 // Hilfsfunktionen
 async function getOrCreateProject(projectName, projectInfo = {}) {
   const client = await pool.connect();
-  
+
   try {
     let result = await client.query(
       'SELECT * FROM projects WHERE name = $1',
@@ -136,7 +136,7 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
         JSON.stringify(projectInfo.workerPercentages || {}),
         JSON.stringify(projectInfo.sessionInfo || {})
       ]);
-      
+
       console.log(`Neues Projekt erstellt: ${projectName}`);
     } else if (Object.keys(projectInfo).length > 0) {
       result = await client.query(`
@@ -153,12 +153,12 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
         JSON.stringify(projectInfo.workerPercentages || result.rows[0].worker_percentages),
         JSON.stringify(projectInfo.sessionInfo || result.rows[0].session_info)
       ]);
-      
+
       console.log(`Projekt-Info aktualisiert: ${projectName}`);
     }
 
     return result.rows[0];
-    
+
   } finally {
     client.release();
   }
@@ -166,7 +166,7 @@ async function getOrCreateProject(projectName, projectInfo = {}) {
 
 async function calculateProjectStatistics(projectId) {
   const client = await pool.connect();
-  
+
   try {
     const statsResult = await client.query(`
       SELECT 
@@ -179,7 +179,7 @@ async function calculateProjectStatistics(projectId) {
     `, [projectId]);
 
     const stats = statsResult.rows[0];
-    
+
     const workerResult = await client.query(`
       SELECT 
         farbe,
@@ -204,9 +204,9 @@ async function calculateProjectStatistics(projectId) {
 
     const workerStats = {};
     workerResult.rows.forEach(worker => {
-      const percentage = parseFloat(stats.total_area) > 0 ? 
+      const percentage = parseFloat(stats.total_area) > 0 ?
         (parseFloat(worker.area) / parseFloat(stats.total_area) * 100) : 0;
-      
+
       workerStats[worker.farbe] = {
         name: worker.bearbeitet,
         color: worker.farbe,
@@ -220,16 +220,16 @@ async function calculateProjectStatistics(projectId) {
     return {
       totalPolygons: parseInt(stats.total_polygons),
       completedPolygons: parseInt(stats.completed_polygons),
-      completionPercentage: parseInt(stats.total_polygons) > 0 ? 
+      completionPercentage: parseInt(stats.total_polygons) > 0 ?
         (parseInt(stats.completed_polygons) / parseInt(stats.total_polygons) * 100) : 0,
       totalArea: parseFloat(stats.total_area),
       completedArea: parseFloat(stats.completed_area),
-      completionAreaPercentage: parseFloat(stats.total_area) > 0 ? 
+      completionAreaPercentage: parseFloat(stats.total_area) > 0 ?
         (parseFloat(stats.completed_area) / parseFloat(stats.total_area) * 100) : 0,
       workerStats,
       participantCount: Object.keys(workerStats).length
     };
-    
+
   } finally {
     client.release();
   }
@@ -241,13 +241,13 @@ async function calculateProjectStatistics(projectId) {
 app.get('/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
-    res.json({ 
+    res.json({
       status: 'healthy',
       database: 'connected',
       timestamp: result.rows[0].now
     });
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'unhealthy',
       database: 'disconnected',
       error: error.message
@@ -260,9 +260,9 @@ app.get('/api/status', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM server_status WHERE id = 1');
     const status = result.rows[0];
-    
+
     console.log('GET /api/status - Current status:', status.status ? 'GRÜN' : 'ROT');
-    
+
     res.json({
       status: status.status,
       lastUpdate: status.last_update,
@@ -276,20 +276,20 @@ app.get('/api/status', async (req, res) => {
 
 app.post('/api/status', async (req, res) => {
   const { status, timestamp, source } = req.body;
-  
+
   if (typeof status !== 'boolean') {
     return res.status(400).json({ error: 'Status muss boolean sein' });
   }
-  
+
   try {
     await pool.query(`
       UPDATE server_status 
       SET status = $1, last_update = $2, source = $3 
       WHERE id = 1
     `, [status, timestamp || new Date().toISOString(), source || 'unknown']);
-    
+
     console.log(`POST /api/status - Status geändert zu: ${status ? 'GRÜN' : 'ROT'} (von ${source || 'unknown'})`);
-    
+
     res.json({
       success: true,
       status: status,
@@ -304,64 +304,64 @@ app.post('/api/status', async (req, res) => {
 // Synchronisation - ERWEITERT mit Löschungserkennung
 app.post('/api/sync', async (req, res) => {
   const { action, layerName, data, timestamp, source, projectInfo } = req.body;
-  
+
   console.log(`POST /api/sync - Layer: ${layerName}, Action: ${action}, Polygons: ${data ? data.length : 0}`);
-  
+
   if (!layerName || !data || !Array.isArray(data)) {
     return res.status(400).json({ error: 'LayerName und data array erforderlich' });
   }
-  
+
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
-    
+
     const projectName = projectInfo?.projectName || layerName;
     const project = await getOrCreateProject(projectName, projectInfo);
-    
+
     let newCount = 0;
     let updatedCount = 0;
     let deletedCount = 0;
-    
+
     for (const incomingPolygon of data) {
       if (!incomingPolygon.id) continue;
-      
+
       // Flexible Feldnamenerkennung für Fläche
-      let flaeche = incomingPolygon.flaeche_ha || 
-                   incomingPolygon['Fläche_ha'] || 
-                   incomingPolygon.Flaeche_ha ||
-                   incomingPolygon['Flaeche_ha'] || 
-                   incomingPolygon.area || 
-                   incomingPolygon.flaeche ||
-                   0;
-      
+      let flaeche = incomingPolygon.flaeche_ha ||
+        incomingPolygon['Fläche_ha'] ||
+        incomingPolygon.Flaeche_ha ||
+        incomingPolygon['Flaeche_ha'] ||
+        incomingPolygon.area ||
+        incomingPolygon.flaeche ||
+        0;
+
       // Prüfe ob Polygon bereits existiert
       const existingResult = await client.query(`
         SELECT * FROM polygons 
         WHERE project_id = $1 AND polygon_id = $2
       `, [project.id, incomingPolygon.id]);
-      
+
       if (existingResult.rows.length > 0) {
         // Update - baue Query dynamisch auf
         const existing = existingResult.rows[0];
         const updateFields = [];
         const updateValues = [];
         let hasChanges = false;
-        
+
         // NEU: Erkenne Löschungen durch "x" Markierung
         const incomingBearbeitet = incomingPolygon.bearbeitet || '';
         const incomingDatumVon = incomingPolygon.datum_von || '';
         const incomingDatumBis = incomingPolygon.datum_bis || '';
         const incomingFarbe = incomingPolygon.farbe || '';
-        
+
         const existingBearbeitet = existing.bearbeitet || '';
         const existingDatumVon = existing.datum_von || '';
         const existingDatumBis = existing.datum_bis || '';
         const existingFarbe = existing.farbe || '';
-        
+
         // Prüfe ob Client das Polygon zum Löschen markiert hat (bearbeitet = "x")
         const isMarkedForDeletion = incomingBearbeitet === 'x';
-        
+
         if (isMarkedForDeletion) {
           // Client hat zum Löschen markiert - lösche alle Felder
           updateFields.push('bearbeitet = $' + (updateValues.length + 1));
@@ -377,42 +377,42 @@ app.post('/api/sync', async (req, res) => {
           console.log(`Löschung durch "x" Markierung für Polygon ${incomingPolygon.id}`);
         } else {
           // Normale Updates nur für leere Felder (Bidirektionale Sync)
-          
+
           // Fläche nur aktualisieren wenn wirklich anders
           if (flaeche > 0 && Math.abs(parseFloat(existing.flaeche_ha || 0) - parseFloat(flaeche)) > 0.0001) {
             updateFields.push('flaeche_ha = $' + (updateValues.length + 1));
             updateValues.push(parseFloat(flaeche));
             hasChanges = true;
           }
-          
+
           // Bearbeitet: Update nur wenn Server leer und Client gefüllt (aber nicht "x")
           if (!existingBearbeitet && incomingBearbeitet && incomingBearbeitet !== 'x') {
             updateFields.push('bearbeitet = $' + (updateValues.length + 1));
             updateValues.push(incomingBearbeitet);
             hasChanges = true;
           }
-          
+
           // Datum_von
           if ((!existingDatumVon && incomingDatumVon) || (existingDatumVon && !incomingDatumVon)) {
             updateFields.push('datum_von = $' + (updateValues.length + 1));
             updateValues.push(incomingDatumVon);
             hasChanges = true;
           }
-          
+
           // Datum_bis
           if ((!existingDatumBis && incomingDatumBis) || (existingDatumBis && !incomingDatumBis)) {
             updateFields.push('datum_bis = $' + (updateValues.length + 1));
             updateValues.push(incomingDatumBis);
             hasChanges = true;
           }
-          
+
           // Farbe
           if ((!existingFarbe && incomingFarbe) || (existingFarbe && !incomingFarbe)) {
             updateFields.push('farbe = $' + (updateValues.length + 1));
             updateValues.push(incomingFarbe);
             hasChanges = true;
           }
-          
+
           // Geometry
           if (!existing.geometry && incomingPolygon.geometry) {
             updateFields.push('geometry = $' + (updateValues.length + 1));
@@ -420,32 +420,32 @@ app.post('/api/sync', async (req, res) => {
             hasChanges = true;
           }
         }
-        
+
         if (hasChanges) {
           updateFields.push('updated_at = CURRENT_TIMESTAMP');
           updateFields.push('source = $' + (updateValues.length + 1));
           updateValues.push(source || 'unknown');
-          
+
           // WHERE Klausel Parameter
           updateValues.push(project.id);
           updateValues.push(incomingPolygon.id);
-          
+
           const updateQuery = `
             UPDATE polygons 
             SET ${updateFields.join(', ')}
             WHERE project_id = $${updateValues.length - 1} AND polygon_id = $${updateValues.length}
           `;
-          
+
           await client.query(updateQuery, updateValues);
-          
-          if (!wasDeleted) {
+
+          if (!isMarkedForDeletion) {
             updatedCount++;
             console.log(`Polygon ${incomingPolygon.id} aktualisiert`);
           } else {
             console.log(`Polygon ${incomingPolygon.id} gelöscht`);
           }
         }
-        
+
       } else {
         // Neues Polygon einfügen
         await client.query(`
@@ -463,12 +463,12 @@ app.post('/api/sync', async (req, res) => {
           incomingPolygon.geometry || '',
           source || 'unknown'
         ]);
-        
+
         newCount++;
         console.log(`Neues Polygon ${incomingPolygon.id} erstellt (Fläche: ${flaeche} ha)`);
       }
     }
-    
+
     // Alle Polygone für Rückgabe abrufen
     const allPolygonsResult = await client.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, updated_at
@@ -476,11 +476,11 @@ app.post('/api/sync', async (req, res) => {
       WHERE project_id = $1
       ORDER BY updated_at DESC
     `, [project.id]);
-    
+
     await client.query('COMMIT');
-    
+
     console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gelöscht: ${deletedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
-    
+
     res.json({
       success: true,
       message: 'Synchronisation erfolgreich',
@@ -493,7 +493,7 @@ app.post('/api/sync', async (req, res) => {
       },
       serverData: allPolygonsResult.rows
     });
-    
+
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Sync Fehler:', error);
@@ -515,25 +515,25 @@ app.get('/api/projects', async (req, res) => {
       GROUP BY p.id
       ORDER BY p.updated_at DESC
     `);
-    
+
     const projects = [];
-    
+
     for (const project of result.rows) {
       const stats = await calculateProjectStatistics(project.id);
-      
+
       projects.push({
         name: project.name,
         ...stats,
         lastUpdate: project.updated_at
       });
     }
-    
+
     res.json({
       projects: projects,
       totalProjects: projects.length,
       lastSync: new Date().toISOString()
     });
-    
+
   } catch (error) {
     console.error('Fehler beim Laden der Projekte:', error);
     res.status(500).json({ error: 'Serverfehler' });
@@ -543,18 +543,18 @@ app.get('/api/projects', async (req, res) => {
 // Detaillierte Projekt-Daten
 app.get('/api/project/:projectName', async (req, res) => {
   const { projectName } = req.params;
-  
+
   try {
     const projectResult = await pool.query(`
       SELECT * FROM projects WHERE name = $1
     `, [projectName]);
-    
+
     if (projectResult.rows.length === 0) {
       return res.status(404).json({ error: 'Projekt nicht gefunden' });
     }
-    
+
     const project = projectResult.rows[0];
-    
+
     const polygonsResult = await pool.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, 
              created_at, updated_at, source
@@ -562,9 +562,9 @@ app.get('/api/project/:projectName', async (req, res) => {
       WHERE project_id = $1
       ORDER BY updated_at DESC
     `, [project.id]);
-    
+
     const stats = await calculateProjectStatistics(project.id);
-    
+
     res.json({
       projectName: project.name,
       info: {
@@ -577,7 +577,7 @@ app.get('/api/project/:projectName', async (req, res) => {
       statistics: stats,
       lastSync: new Date().toISOString()
     });
-    
+
   } catch (error) {
     console.error('Fehler beim Laden des Projekts:', error);
     res.status(500).json({ error: 'Serverfehler' });
@@ -587,29 +587,29 @@ app.get('/api/project/:projectName', async (req, res) => {
 // Legacy Endpoints
 app.get('/api/data/:layerName', async (req, res) => {
   const { layerName } = req.params;
-  
+
   try {
     const projectResult = await pool.query(`
       SELECT id FROM projects WHERE name = $1
     `, [layerName]);
-    
+
     if (projectResult.rows.length === 0) {
       return res.status(404).json({ error: 'Layer nicht gefunden' });
     }
-    
+
     const polygonsResult = await pool.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry
       FROM polygons 
       WHERE project_id = $1
     `, [projectResult.rows[0].id]);
-    
+
     res.json({
       layerName: layerName,
       data: polygonsResult.rows,
       lastSync: new Date().toISOString(),
       count: polygonsResult.rows.length
     });
-    
+
   } catch (error) {
     console.error('Fehler beim Laden der Layer-Daten:', error);
     res.status(500).json({ error: 'Serverfehler' });
@@ -628,7 +628,7 @@ app.get('/api/layers', async (req, res) => {
       GROUP BY p.id, p.name
       ORDER BY p.updated_at DESC
     `);
-    
+
     res.json({
       layers: result.rows.map(row => ({
         name: row.name,
@@ -638,7 +638,7 @@ app.get('/api/layers', async (req, res) => {
       totalLayers: result.rows.length,
       lastSync: new Date().toISOString()
     });
-    
+
   } catch (error) {
     console.error('Fehler beim Laden der Layer:', error);
     res.status(500).json({ error: 'Serverfehler' });
@@ -846,11 +846,11 @@ async function startServer() {
   console.log('Environment:', process.env.NODE_ENV || 'development');
   console.log('Port:', PORT);
   console.log('Database URL vorhanden:', !!process.env.DATABASE_URL);
-  
+
   try {
     console.log('Initialisiere Datenbank...');
     await initializeDatabase();
-    
+
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 PostgreSQL Server läuft auf Port ${PORT}
