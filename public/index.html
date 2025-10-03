@@ -602,7 +602,7 @@
             `;
 
             renderMap(project.data);
-            renderProjectSunburst(project.info, workers);
+            renderProjectSunburst(project.info, workers, project.statistics);
             renderTimelineTabs(project.data, workers);
         }
 
@@ -696,7 +696,8 @@
                         tooltip.html(`
                             <strong>Bereich ${poly.id}</strong><br/>
                             ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
-                            ${poly.bearbeitet || 'Nicht bearbeitet'}
+                            ${poly.bearbeitet || 'Nicht bearbeitet'}<br/>
+                            <em>Klicken zum Zoomen</em>
                         `)
                             .style('left', (event.pageX + 10) + 'px')
                             .style('top', (event.pageY - 10) + 'px');
@@ -704,14 +705,63 @@
                     .on('mouseout', function () {
                         d3.select(this).attr('opacity', opacity);
                         tooltip.transition().duration(200).style('opacity', 0);
-                    });
+                    })
+                    .on('click', function (event) {
+                        // Zoom auf das angeklickte Polygon
+                        const bounds = poly.coordinates;
+                        const xExtent = d3.extent(bounds, d => d[0]);
+                        const yExtent = d3.extent(bounds, d => d[1]);
+
+                        // Padding für bessere Sicht
+                        const xPadding = (xExtent[1] - xExtent[0]) * 0.1;
+                        const yPadding = (yExtent[1] - yExtent[0]) * 0.1;
+
+                        const newX = d3.scaleLinear()
+                            .domain([xExtent[0] - xPadding, xExtent[1] + xPadding])
+                            .range([margin, width - margin]);
+
+                        const newY = d3.scaleLinear()
+                            .domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
+                            .range([height - margin, margin]);
+
+                        // Animiere alle Polygone zur neuen Position
+                        svg.selectAll('path')
+                            .transition()
+                            .duration(750)
+                            .attr('d', function () {
+                                const polyData = d3.select(this).datum();
+                                if (polyData && polyData.coordinates) {
+                                    const newCoords = polyData.coordinates.map(([px, py]) => [newX(px), newY(py)]);
+                                    return `M${newCoords.map(d => d.join(',')).join('L')}Z`;
+                                }
+                                return d3.select(this).attr('d');
+                            });
+
+                        // Doppelklick zum Zurückzoomen
+                        svg.on('dblclick', function () {
+                            svg.selectAll('path')
+                                .transition()
+                                .duration(750)
+                                .attr('d', function () {
+                                    const polyData = d3.select(this).datum();
+                                    if (polyData && polyData.coordinates) {
+                                        const originalCoords = polyData.coordinates.map(([px, py]) => [x(px), y(py)]);
+                                        return `M${originalCoords.map(d => d.join(',')).join('L')}Z`;
+                                    }
+                                    return d3.select(this).attr('d');
+                                });
+                        });
+
+                        event.stopPropagation();
+                    })
+                    .datum(poly); // Speichere Polygon-Daten für Zoom
             });
 
             container.append(svg.node());
         }
 
-        // Neues Sunburst basierend auf Settings-Anteilen
-        function renderProjectSunburst(projectInfo, workers) {
+        // Sunburst: Innerer Ring = worker_percentages als Flächenanteil
+        function renderProjectSunburst(projectInfo, workers, stats) {
             const container = document.getElementById('sunburst-chart');
             container.innerHTML = '';
 
@@ -724,34 +774,26 @@
             const height = 500;
             const radius = Math.min(width, height) / 2;
 
-            // Erste Ebene: Gesamtprojekt (Settings-Anteile)
-            const settingsData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => ({
-                name: projectInfo.colorWorkers[color] || color,
-                color: color,
-                value: percentage,
-                children: []
-            }));
+            // Berechne Gesamtfläche aus aktuellen Daten
+            const totalArea = stats.totalArea || 1;
 
-            // Zweite Ebene: Ist-Daten nach Bearbeiter und Datum
-            workers.forEach(worker => {
-                const settingsWorker = settingsData.find(s => s.color === worker.color);
-                if (settingsWorker && worker.chronology) {
-                    // Gruppiere nach Datum
-                    const dateGroups = {};
-                    worker.chronology.forEach(entry => {
-                        const date = entry.datum_von || entry.datum_bis || 'Unbekannt';
-                        if (!dateGroups[date]) {
-                            dateGroups[date] = 0;
-                        }
-                        dateGroups[date] += entry.area;
-                    });
+            // Innerer Ring: worker_percentages als Anteil der Gesamtfläche
+            const settingsData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => {
+                const plannedArea = (percentage / 100) * totalArea;
+                const actualWorker = workers.find(w => w.color === color);
 
-                    settingsWorker.children = Object.entries(dateGroups).map(([date, area]) => ({
-                        name: date,
-                        value: area,
-                        color: worker.color
-                    }));
-                }
+                return {
+                    name: projectInfo.colorWorkers[color] || color,
+                    color: color,
+                    value: plannedArea,
+                    actualValue: actualWorker ? actualWorker.area : 0,
+                    children: actualWorker && actualWorker.chronology ?
+                        actualWorker.chronology.map(entry => ({
+                            name: entry.datum_von || entry.datum_bis || 'Unbekannt',
+                            value: entry.area,
+                            color: color
+                        })) : []
+                };
             });
 
             const hierarchyData = {
@@ -797,6 +839,18 @@
                     d3.select(this).attr("opacity", 1);
 
                     tooltip.transition().duration(200).style('opacity', 1);
+
+                    let tooltipContent = `<strong>${d.data.name}</strong><br/>`;
+                    if (d.depth === 1) {
+                        const percentage = (d.value / totalArea * 100).toFixed(1);
+                        const actualPercentage = d.data.actualValue ? (d.data.actualValue / totalArea * 100).toFixed(1) : '0.0';
+                        tooltipContent += `Geplant: ${d.value.toFixed(2)} ha (${percentage}%)<br/>`;
+                        tooltipContent += `Ist: ${d.data.actualValue.toFixed(2)} ha (${actualPercentage}%)`;
+                    } else {
+                        tooltipContent += `${d.value.toFixed(2)} ha<br/>Bearbeitete Fläche`;
+                    }
+
+                    tooltip.html(tooltipContent)
                     const displayValue = d.depth === 1 ? `${d.value.toFixed(1)}%` : `${d.value.toFixed(2)} ha`;
                     tooltip.html(`
                         <strong>${d.data.name}</strong><br/>
@@ -850,9 +904,23 @@
             const sortedData = Object.values(dailyData)
                 .sort((a, b) => new Date(b.date.split('.').reverse().join('-')) - new Date(a.date.split('.').reverse().join('-')));
 
-            // Erstelle Tabs
-            const workerNames = [...new Set(workers.map(w => w.name))];
-            const tabs = ['Gesamt', ...workerNames];
+            // Erstelle Tabs - verwende alle Bearbeiter aus den Settings
+            const allWorkerNames = [];
+            if (currentProject && currentProject.info && currentProject.info.colorWorkers) {
+                Object.values(currentProject.info.colorWorkers).forEach(name => {
+                    if (name && !allWorkerNames.includes(name)) {
+                        allWorkerNames.push(name);
+                    }
+                });
+            }
+            // Fallback: Verwende Bearbeiter mit Daten
+            workers.forEach(w => {
+                if (w.name && !allWorkerNames.includes(w.name)) {
+                    allWorkerNames.push(w.name);
+                }
+            });
+
+            const tabs = ['Gesamt', ...allWorkerNames];
 
             const tabsHtml = tabs.map((tab, index) =>
                 `<button class="tab ${index === 0 ? 'active' : ''}" onclick="switchTab('${tab}', ${index})">${tab}</button>`
