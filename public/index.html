@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="de">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QField Dashboard</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -182,8 +182,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .back-button {
@@ -231,41 +238,6 @@
             height: 500px;
             border-radius: 8px;
             overflow: hidden;
-        }
-
-        .worker-legend {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 16px;
-            margin-top: 24px;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: rgba(102, 126, 234, 0.1);
-            border-radius: 8px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
-        }
-
-        .legend-color {
-            width: 16px;
-            height: 16px;
-            border-radius: 4px;
-        }
-
-        .legend-label {
-            font-size: 0.875rem;
-            color: #e4e6eb;
-            font-weight: 500;
-        }
-
-        .legend-value {
-            font-size: 0.875rem;
-            color: #8b92b8;
-            margin-left: 4px;
         }
 
         .daily-performance {
@@ -326,8 +298,13 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         svg text {
@@ -357,6 +334,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -377,13 +355,15 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
+
         let projectsData = [];
         let currentProject = null;
 
         const colorMap = {
             'r': '#ef4444',
-            'g': '#10b981', 
+            'g': '#10b981',
             'b': '#3b82f6',
             'y': '#f59e0b'
         };
@@ -401,14 +381,14 @@
                 projectsData = data.projects;
                 renderProjectsList(projectsData);
             } catch (error) {
-                document.getElementById('projects-view').innerHTML = 
+                document.getElementById('projects-view').innerHTML =
                     '<div class="loading"><p>Fehler beim Laden der Projekte</p></div>';
             }
         }
 
         function renderProjectsList(projects) {
             const container = document.getElementById('projects-view');
-            
+
             if (projects.length === 0) {
                 container.innerHTML = '<div class="loading"><p>Keine Projekte vorhanden</p></div>';
                 return;
@@ -417,10 +397,10 @@
             const html = projects.map(project => {
                 const workers = Object.values(project.workerStats || {});
                 const completionPct = project.completionAreaPercentage || 0;
-                
+
                 let workerSegmentsHtml = '';
                 if (workers.length > 0) {
-                    workerSegmentsHtml = workers.map(worker => 
+                    workerSegmentsHtml = workers.map(worker =>
                         `<div class="worker-segment" 
                               style="width: ${worker.percentage}%; 
                                      background: ${colorMap[worker.color] || '#667eea'}"
@@ -476,19 +456,19 @@
                         <p>Lade Projektdetails...</p>
                     </div>
                 `;
-                
+
                 document.getElementById('projects-view').style.display = 'none';
                 document.getElementById('detail-view').classList.add('active');
-                
+
                 const response = await fetch(`/api/project/${encodeURIComponent(projectName)}`);
-                
+
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
-                
+
                 const project = await response.json();
                 currentProject = project;
-                
+
                 renderProjectDetail(project);
             } catch (error) {
                 console.error('Fehler beim Laden der Projektdetails:', error);
@@ -496,9 +476,6 @@
                     <div class="chart-container">
                         <p style="color: #ef4444; text-align: center;">
                             Fehler beim Laden der Projektdetails: ${error.message}
-                        </p>
-                        <p style="color: #8b92b8; text-align: center; margin-top: 16px;">
-                            Bitte überprüfe die Server-Logs für weitere Details.
                         </p>
                     </div>
                 `;
@@ -515,7 +492,7 @@
             const container = document.getElementById('detail-content');
             const stats = project.statistics;
             const workers = Object.values(stats.workerStats || {});
-            
+
             container.innerHTML = `
                 <div class="chart-container">
                     <div class="chart-title">${project.projectName} - Projektübersicht</div>
@@ -540,18 +517,17 @@
                 </div>
 
                 <div class="map-container">
-                    <div class="chart-title">🗺️ Kartenansicht - Aktueller Projektstand</div>
+                    <div class="chart-title">🗺️ Kartenansicht</div>
                     <div id="map"></div>
                 </div>
 
                 <div class="chart-container">
-                    <div class="chart-title">📊 Leistung nach Bearbeiter</div>
+                    <div class="chart-title">📊 Mitarbeiterleistung</div>
                     <div id="worker-chart"></div>
-                    <div class="worker-legend" id="worker-legend"></div>
                 </div>
 
                 <div class="chart-container">
-                    <div class="chart-title">📈 Tägliche Leistung (gruppiert nach Datum & Bearbeiter)</div>
+                    <div class="chart-title">📈 Tägliche Leistung (nach Datum & Bearbeiter)</div>
                     <div id="daily-performance-chart"></div>
                     <div class="daily-performance" id="daily-performance-list"></div>
                 </div>
@@ -562,98 +538,27 @@
             renderDailyPerformance(project.data);
         }
 
-        function renderWorkerChart(workers) {
-            const width = 800;
-            const height = 400;
-            const margin = {top: 20, right: 30, bottom: 40, left: 60};
-
-            const svg = d3.select('#worker-chart')
-                .append('svg')
-                .attr('width', '100%')
-                .attr('height', height)
-                .attr('viewBox', `0 0 ${width} ${height}`);
-
-            const x = d3.scaleBand()
-                .domain(workers.map(w => w.name))
-                .range([margin.left, width - margin.right])
-                .padding(0.3);
-
-            const y = d3.scaleLinear()
-                .domain([0, d3.max(workers, w => w.area) * 1.1])
-                .nice()
-                .range([height - margin.bottom, margin.top]);
-
-            svg.selectAll('rect')
-                .data(workers)
-                .join('rect')
-                .attr('x', d => x(d.name))
-                .attr('y', height - margin.bottom)
-                .attr('width', x.bandwidth())
-                .attr('height', 0)
-                .attr('fill', d => colorMap[d.color] || '#667eea')
-                .attr('rx', 4)
-                .transition()
-                .duration(1000)
-                .attr('y', d => y(d.area))
-                .attr('height', d => height - margin.bottom - y(d.area));
-
-            svg.append('g')
-                .attr('transform', `translate(0,${height - margin.bottom})`)
-                .call(d3.axisBottom(x))
-                .selectAll('text')
-                .attr('transform', 'rotate(-45)')
-                .style('text-anchor', 'end');
-
-            svg.append('g')
-                .attr('transform', `translate(${margin.left},0)`)
-                .call(d3.axisLeft(y).ticks(5))
-                .call(g => g.select('.domain').remove())
-                .call(g => g.selectAll('.tick line').clone()
-                    .attr('x2', width - margin.left - margin.right)
-                    .attr('stroke-opacity', 0.1));
-
-            const legend = d3.select('#worker-legend');
-            workers.forEach(worker => {
-                legend.append('div')
-                    .attr('class', 'legend-item')
-                    .html(`
-                        <div class="legend-color" style="background: ${colorMap[worker.color]}"></div>
-                        <span class="legend-label">${worker.name}</span>
-                        <span class="legend-value">${worker.area.toFixed(2)} ha (${worker.percentage.toFixed(1)}%)</span>
-                    `);
-            });
-        }
-
-
-
+        // Einfache Karte - schlicht ohne Legende
         function renderMap(polygons) {
-            const mapDiv = document.getElementById('map');
-            mapDiv.innerHTML = ''; // Clear previous content
-            
+            const container = document.getElementById('map');
+            container.innerHTML = '';
+
             if (!polygons || polygons.length === 0) {
-                mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
+                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
                 return;
             }
 
             const validPolygons = polygons.filter(p => p.geometry && p.geometry.trim() !== '');
-            
             if (validPolygons.length === 0) {
-                mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
+                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
                 return;
             }
 
-            const width = mapDiv.clientWidth;
+            const width = container.clientWidth || 800;
             const height = 500;
+            const margin = 20;
 
-            const svg = d3.select('#map')
-                .append('svg')
-                .attr('width', '100%')
-                .attr('height', height)
-                .attr('viewBox', `0 0 ${width} ${height}`)
-                .style('background', '#0f1419')
-                .style('border-radius', '8px');
-
-            // Sammle alle Koordinaten für Bounds-Berechnung
+            // Sammle alle Koordinaten
             const allCoordinates = [];
             const polygonData = [];
 
@@ -670,140 +575,159 @@
                         }
                     }
                     if (coords.length > 0) {
-                        polygonData.push({
-                            ...poly,
-                            coordinates: coords
-                        });
+                        polygonData.push({ ...poly, coordinates: coords });
                     }
                 }
             });
 
-            if (allCoordinates.length === 0) {
-                mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Konnte Koordinaten nicht verarbeiten</p>';
-                return;
-            }
+            if (allCoordinates.length === 0) return;
 
-            // Berechne Bounds mit Padding
-            const xExtent = d3.extent(allCoordinates, d => d[0]);
-            const yExtent = d3.extent(allCoordinates, d => d[1]);
-            
-            const padding = 30;
-            const xScale = d3.scaleLinear()
-                .domain(xExtent)
-                .range([padding, width - padding]);
+            // Scales
+            const x = d3.scaleLinear()
+                .domain(d3.extent(allCoordinates, d => d[0]))
+                .range([margin, width - margin]);
 
-            const yScale = d3.scaleLinear()
-                .domain(yExtent)
-                .range([height - padding, padding]);
+            const y = d3.scaleLinear()
+                .domain(d3.extent(allCoordinates, d => d[1]))
+                .range([height - margin, margin]);
 
-            // Zeichne Polygone
-            polygonData.forEach((poly, index) => {
-                const scaledCoords = poly.coordinates.map(([x, y]) => [xScale(x), yScale(y)]);
-                
-                // Bestimme Farbe und Opacity basierend auf Status
+            // SVG
+            const svg = d3.create("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .attr("viewBox", [0, 0, width, height])
+                .style("background", "#0f1419")
+                .style("border-radius", "8px");
+
+            // Polygone zeichnen
+            polygonData.forEach(poly => {
+                const scaledCoords = poly.coordinates.map(([px, py]) => [x(px), y(py)]);
+                const pathData = `M${scaledCoords.map(d => d.join(',')).join('L')}Z`;
+
                 let color = '#667eea';
-                let opacity = 0.3;
-                let strokeWidth = 1;
-                
+                let opacity = 0.4;
+
                 if (poly.farbe && colorMap[poly.farbe]) {
                     color = colorMap[poly.farbe];
                 }
-                
                 if (poly.bearbeitet && poly.bearbeitet !== '') {
                     opacity = 0.8;
-                    strokeWidth = 2;
                 }
 
-                // Erstelle Polygon-Path
-                const pathData = `M${scaledCoords.map(d => d.join(',')).join('L')}Z`;
-                
-                const polygonElement = svg.append('path')
+                svg.append('path')
                     .attr('d', pathData)
                     .attr('fill', color)
                     .attr('stroke', color)
-                    .attr('stroke-width', strokeWidth)
+                    .attr('stroke-width', 1)
                     .attr('opacity', opacity)
                     .style('cursor', 'pointer')
-                    .on('mouseover', function(event) {
-                        d3.select(this)
-                            .transition()
-                            .duration(200)
-                            .attr('opacity', Math.min(opacity + 0.3, 1))
-                            .attr('stroke-width', strokeWidth + 1);
-                        
-                        tooltip.transition()
-                            .duration(200)
-                            .style('opacity', 1);
-                        
-                        const tooltipContent = `
+                    .on('mouseover', function (event) {
+                        d3.select(this).attr('opacity', Math.min(opacity + 0.2, 1));
+
+                        tooltip.transition().duration(200).style('opacity', 1);
+                        tooltip.html(`
                             <strong>Polygon ${poly.id}</strong><br/>
-                            Fläche: ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
-                            ${poly.bearbeitet ? `Bearbeiter: ${poly.bearbeitet}<br/>` : 'Nicht bearbeitet<br/>'}
-                            ${poly.datum_von ? `Von: ${poly.datum_von}<br/>` : ''}
-                            ${poly.datum_bis ? `Bis: ${poly.datum_bis}` : ''}
-                        `;
-                        
-                        tooltip.html(tooltipContent)
+                            ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
+                            ${poly.bearbeitet || 'Nicht bearbeitet'}
+                        `)
                             .style('left', (event.pageX + 10) + 'px')
                             .style('top', (event.pageY - 10) + 'px');
                     })
-                    .on('mouseout', function() {
-                        d3.select(this)
-                            .transition()
-                            .duration(200)
-                            .attr('opacity', opacity)
-                            .attr('stroke-width', strokeWidth);
-                        
-                        tooltip.transition()
-                            .duration(200)
-                            .style('opacity', 0);
+                    .on('mouseout', function () {
+                        d3.select(this).attr('opacity', opacity);
+                        tooltip.transition().duration(200).style('opacity', 0);
                     });
             });
 
-            // Legende für Karte
-            const legendData = [
-                { color: '#667eea', label: 'Nicht bearbeitet', opacity: 0.3 },
-                { color: '#ef4444', label: 'Rot (bearbeitet)', opacity: 0.8 },
-                { color: '#10b981', label: 'Grün (bearbeitet)', opacity: 0.8 },
-                { color: '#3b82f6', label: 'Blau (bearbeitet)', opacity: 0.8 },
-                { color: '#f59e0b', label: 'Gelb (bearbeitet)', opacity: 0.8 }
-            ];
-
-            const legend = svg.append('g')
-                .attr('transform', `translate(${width - 200}, 20)`);
-
-            legendData.forEach((item, i) => {
-                const legendItem = legend.append('g')
-                    .attr('transform', `translate(0, ${i * 25})`);
-
-                legendItem.append('rect')
-                    .attr('width', 18)
-                    .attr('height', 18)
-                    .attr('fill', item.color)
-                    .attr('opacity', item.opacity)
-                    .attr('stroke', item.color)
-                    .attr('stroke-width', 1)
-                    .attr('rx', 3);
-
-                legendItem.append('text')
-                    .attr('x', 25)
-                    .attr('y', 14)
-                    .attr('font-size', '12px')
-                    .attr('fill', '#e4e6eb')
-                    .text(item.label);
-            });
+            container.append(svg.node());
         }
 
+        // Mitarbeiter Balkendiagramm nach Observable Pattern
+        function renderWorkerChart(workers) {
+            const container = document.getElementById('worker-chart');
+            container.innerHTML = '';
+
+            if (!workers || workers.length === 0) {
+                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 20px;">Keine Mitarbeiterdaten verfügbar</p>';
+                return;
+            }
+
+            const width = container.clientWidth || 800;
+            const height = 400;
+            const marginTop = 20;
+            const marginRight = 30;
+            const marginBottom = 60;
+            const marginLeft = 60;
+
+            // Scales
+            const x = d3.scaleBand()
+                .domain(workers.map(d => d.name))
+                .range([marginLeft, width - marginRight])
+                .padding(0.3);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(workers, d => d.area)])
+                .nice()
+                .range([height - marginBottom, marginTop]);
+
+            const color = d3.scaleOrdinal()
+                .domain(workers.map(d => d.color))
+                .range(workers.map(d => colorMap[d.color] || '#667eea'));
+
+            // SVG
+            const svg = d3.create("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .attr("viewBox", [0, 0, width, height]);
+
+            // Bars
+            svg.append("g")
+                .selectAll("rect")
+                .data(workers)
+                .join("rect")
+                .attr("x", d => x(d.name))
+                .attr("y", height - marginBottom)
+                .attr("width", x.bandwidth())
+                .attr("height", 0)
+                .attr("fill", d => color(d.color))
+                .attr("rx", 4)
+                .transition()
+                .duration(1000)
+                .attr("y", d => y(d.area))
+                .attr("height", d => height - marginBottom - y(d.area));
+
+            // X-axis
+            svg.append("g")
+                .attr("transform", `translate(0,${height - marginBottom})`)
+                .call(d3.axisBottom(x))
+                .selectAll("text")
+                .attr("transform", "rotate(-45)")
+                .style("text-anchor", "end")
+                .attr("font-size", "12px");
+
+            // Y-axis
+            svg.append("g")
+                .attr("transform", `translate(${marginLeft},0)`)
+                .call(d3.axisLeft(y))
+                .call(g => g.select(".domain").remove())
+                .call(g => g.selectAll(".tick line").clone()
+                    .attr("x2", width - marginLeft - marginRight)
+                    .attr("stroke-opacity", 0.1));
+
+            container.append(svg.node());
+        }
+
+        // Tägliche Leistung - gruppiert nach Datum und Bearbeiter
         function renderDailyPerformance(polygons) {
             // Gruppiere nach Datum und Bearbeiter
             const dailyData = {};
-            
+
             polygons.forEach(poly => {
                 if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x') {
                     const dates = [];
                     if (poly.datum_von) dates.push(poly.datum_von);
                     if (poly.datum_bis && poly.datum_bis !== poly.datum_von) dates.push(poly.datum_bis);
-                    
+
                     dates.forEach(date => {
                         if (date) {
                             const key = `${date}_${poly.bearbeitet}`;
@@ -828,7 +752,7 @@
 
             // Erstelle D3 Chart für tägliche Leistung
             renderDailyChart(sortedData);
-            
+
             // Erstelle Liste
             const listContainer = document.getElementById('daily-performance-list');
             if (sortedData.length === 0) {
@@ -852,6 +776,7 @@
             listContainer.innerHTML = listHtml;
         }
 
+        // Gestapeltes Balkendiagramm nach Observable Pattern
         function renderDailyChart(data) {
             const container = document.getElementById('daily-performance-chart');
             container.innerHTML = '';
@@ -860,13 +785,10 @@
 
             const width = container.clientWidth || 800;
             const height = 300;
-            const margin = { top: 20, right: 30, bottom: 60, left: 60 };
-
-            const svg = d3.select('#daily-performance-chart')
-                .append('svg')
-                .attr('width', '100%')
-                .attr('height', height)
-                .attr('viewBox', `0 0 ${width} ${height}`);
+            const marginTop = 20;
+            const marginRight = 30;
+            const marginBottom = 60;
+            const marginLeft = 60;
 
             // Gruppiere Daten nach Datum für gestapeltes Balkendiagramm
             const dateGroups = d3.group(data, d => d.date);
@@ -876,54 +798,58 @@
                 workers: values
             })).sort((a, b) => new Date(a.date) - new Date(b.date));
 
+            // Scales
             const x = d3.scaleBand()
                 .domain(chartData.map(d => d.date))
-                .range([margin.left, width - margin.right])
+                .range([marginLeft, width - marginRight])
                 .padding(0.2);
 
             const y = d3.scaleLinear()
                 .domain([0, d3.max(chartData, d => d.total)])
                 .nice()
-                .range([height - margin.bottom, margin.top]);
+                .range([height - marginBottom, marginTop]);
 
-            // X-Achse
-            svg.append('g')
-                .attr('transform', `translate(0,${height - margin.bottom})`)
+            // SVG
+            const svg = d3.create("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .attr("viewBox", [0, 0, width, height]);
+
+            // X-axis
+            svg.append("g")
+                .attr("transform", `translate(0,${height - marginBottom})`)
                 .call(d3.axisBottom(x))
-                .selectAll('text')
-                .attr('transform', 'rotate(-45)')
-                .style('text-anchor', 'end')
-                .attr('font-size', '11px');
+                .selectAll("text")
+                .attr("transform", "rotate(-45)")
+                .style("text-anchor", "end")
+                .attr("font-size", "11px");
 
-            // Y-Achse
-            svg.append('g')
-                .attr('transform', `translate(${margin.left},0)`)
+            // Y-axis
+            svg.append("g")
+                .attr("transform", `translate(${marginLeft},0)`)
                 .call(d3.axisLeft(y))
-                .call(g => g.select('.domain').remove())
-                .call(g => g.selectAll('.tick line').clone()
-                    .attr('x2', width - margin.left - margin.right)
-                    .attr('stroke-opacity', 0.1));
+                .call(g => g.select(".domain").remove())
+                .call(g => g.selectAll(".tick line").clone()
+                    .attr("x2", width - marginLeft - marginRight)
+                    .attr("stroke-opacity", 0.1));
 
-            // Balken
+            // Gestapelte Balken
             chartData.forEach(dayData => {
-                let yOffset = height - margin.bottom;
-                
+                let yOffset = 0;
+
                 dayData.workers.forEach(worker => {
                     const barHeight = y(0) - y(worker.area);
                     const color = colorMap[worker.color] || '#667eea';
-                    
+
                     svg.append('rect')
                         .attr('x', x(dayData.date))
-                        .attr('y', yOffset - barHeight)
+                        .attr('y', y(yOffset + worker.area))
                         .attr('width', x.bandwidth())
                         .attr('height', barHeight)
                         .attr('fill', color)
                         .attr('opacity', 0.8)
-                        .on('mouseover', function(event) {
-                            tooltip.transition()
-                                .duration(200)
-                                .style('opacity', 1);
-                            
+                        .on('mouseover', function (event) {
+                            tooltip.transition().duration(200).style('opacity', 1);
                             tooltip.html(`
                                 <strong>${dayData.date}</strong><br/>
                                 ${worker.worker}<br/>
@@ -932,19 +858,25 @@
                                 .style('left', (event.pageX + 10) + 'px')
                                 .style('top', (event.pageY - 10) + 'px');
                         })
-                        .on('mouseout', function() {
-                            tooltip.transition()
-                                .duration(200)
-                                .style('opacity', 0);
+                        .on('mouseout', function () {
+                            tooltip.transition().duration(200).style('opacity', 0);
                         });
-                    
-                    yOffset -= barHeight;
+
+                    yOffset += worker.area;
                 });
             });
+
+            container.append(svg.node());
         }
 
+        // Global functions für onclick events
+        window.showProjectDetail = showProjectDetail;
+        window.showProjectsList = showProjectsList;
+
+        // Start the app
         loadProjects();
         setInterval(loadProjects, 60000);
     </script>
 </body>
+
 </html>
