@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="de">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -191,8 +192,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .back-button {
@@ -275,8 +283,13 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         svg text {
@@ -431,7 +444,7 @@
 
     <script type="module">
         import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
-        
+
         let projectsData = [];
         let currentProject = null;
 
@@ -455,14 +468,14 @@
                 projectsData = data.projects;
                 renderProjectsList(projectsData);
             } catch (error) {
-                document.getElementById('projects-view').innerHTML = 
+                document.getElementById('projects-view').innerHTML =
                     '<div class="loading"><p>Fehler beim Laden der Projekte</p></div>';
             }
         }
 
         function renderProjectsList(projects) {
             const container = document.getElementById('projects-view');
-            
+
             if (projects.length === 0) {
                 container.innerHTML = '<div class="loading"><p>Keine Projekte vorhanden</p></div>';
                 return;
@@ -471,10 +484,10 @@
             const html = projects.map(project => {
                 const workers = Object.values(project.workerStats || {});
                 const completionPct = project.completionAreaPercentage || 0;
-                
+
                 let workerSegmentsHtml = '';
                 if (workers.length > 0) {
-                    workerSegmentsHtml = workers.map(worker => 
+                    workerSegmentsHtml = workers.map(worker =>
                         `<div class="worker-segment" 
                               style="width: ${worker.percentage}%; 
                                      background: ${colorMap[worker.color] || '#667eea'}"
@@ -532,19 +545,19 @@
                         <p>Lade Projektdetails...</p>
                     </div>
                 `;
-                
+
                 document.getElementById('projects-view').style.display = 'none';
                 document.getElementById('detail-view').classList.add('active');
-                
+
                 const response = await fetch(`/api/project/${encodeURIComponent(projectName)}`);
-                
+
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
-                
+
                 const project = await response.json();
                 currentProject = project;
-                
+
                 renderProjectDetail(project);
             } catch (error) {
                 console.error('Fehler beim Laden der Projektdetails:', error);
@@ -568,7 +581,7 @@
             const container = document.getElementById('detail-content');
             const stats = project.statistics;
             const workers = Object.values(stats.workerStats || {});
-            
+
             container.innerHTML = `
                 <div class="project-title">${project.projectName}</div>
 
@@ -597,7 +610,7 @@
         function renderMap(polygons) {
             const container = document.getElementById('map');
             container.innerHTML = '';
-            
+
             if (!polygons || polygons.length === 0) {
                 container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
                 return;
@@ -658,10 +671,10 @@
             polygonData.forEach(poly => {
                 const scaledCoords = poly.coordinates.map(([px, py]) => [x(px), y(py)]);
                 const pathData = `M${scaledCoords.map(d => d.join(',')).join('L')}Z`;
-                
+
                 let color = '#667eea';
                 let opacity = 0.4;
-                
+
                 if (poly.farbe && colorMap[poly.farbe]) {
                     color = colorMap[poly.farbe];
                 }
@@ -676,19 +689,19 @@
                     .attr('stroke-width', 1)
                     .attr('opacity', opacity)
                     .style('cursor', 'pointer')
-                    .on('mouseover', function(event) {
+                    .on('mouseover', function (event) {
                         d3.select(this).attr('opacity', Math.min(opacity + 0.2, 1));
-                        
+
                         tooltip.transition().duration(200).style('opacity', 1);
                         tooltip.html(`
                             <strong>Bereich ${poly.id}</strong><br/>
                             ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
                             ${poly.bearbeitet || 'Nicht bearbeitet'}
                         `)
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 10) + 'px');
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY - 10) + 'px');
                     })
-                    .on('mouseout', function() {
+                    .on('mouseout', function () {
                         d3.select(this).attr('opacity', opacity);
                         tooltip.transition().duration(200).style('opacity', 0);
                     });
@@ -780,9 +793,9 @@
                 .attr("stroke", "#0a0e27")
                 .attr("stroke-width", 2)
                 .style("cursor", "pointer")
-                .on("mouseover", function(event, d) {
+                .on("mouseover", function (event, d) {
                     d3.select(this).attr("opacity", 1);
-                    
+
                     tooltip.transition().duration(200).style('opacity', 1);
                     const displayValue = d.depth === 1 ? `${d.value.toFixed(1)}%` : `${d.value.toFixed(2)} ha`;
                     tooltip.html(`
@@ -790,10 +803,10 @@
                         ${displayValue}<br/>
                         ${d.depth === 1 ? 'Geplanter Anteil' : 'Bearbeitete Fläche'}
                     `)
-                    .style('left', (event.pageX + 10) + 'px')
-                    .style('top', (event.pageY - 10) + 'px');
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY - 10) + 'px');
                 })
-                .on("mouseout", function(event, d) {
+                .on("mouseout", function (event, d) {
                     d3.select(this).attr("opacity", d.depth === 1 ? 0.8 : 0.6);
                     tooltip.transition().duration(200).style('opacity', 0);
                 });
@@ -808,13 +821,13 @@
 
             // Gruppiere Daten nach Bearbeiter und Datum
             const dailyData = {};
-            
+
             polygons.forEach(poly => {
                 if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x') {
                     const dates = [];
                     if (poly.datum_von) dates.push(poly.datum_von);
                     if (poly.datum_bis && poly.datum_bis !== poly.datum_von) dates.push(poly.datum_bis);
-                    
+
                     dates.forEach(date => {
                         if (date) {
                             const key = `${date}_${poly.bearbeitet}`;
@@ -841,7 +854,7 @@
             const workerNames = [...new Set(workers.map(w => w.name))];
             const tabs = ['Gesamt', ...workerNames];
 
-            const tabsHtml = tabs.map((tab, index) => 
+            const tabsHtml = tabs.map((tab, index) =>
                 `<button class="tab ${index === 0 ? 'active' : ''}" onclick="switchTab('${tab}', ${index})">${tab}</button>`
             ).join('');
 
@@ -882,7 +895,7 @@
         }
 
         // Tab-Switching Funktion
-        window.switchTab = function(tabName, index) {
+        window.switchTab = function (tabName, index) {
             // Entferne active Klasse von allen Tabs und Contents
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -901,4 +914,5 @@
         setInterval(loadProjects, 60000);
     </script>
 </body>
+
 </html>
