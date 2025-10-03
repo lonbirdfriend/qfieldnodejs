@@ -348,7 +348,7 @@ app.post('/api/sync', async (req, res) => {
         const updateValues = [];
         let hasChanges = false;
         
-        // NEU: Erkenne Löschungen durch Vergleich
+        // NEU: Erkenne Löschungen durch "x" Markierung
         const incomingBearbeitet = incomingPolygon.bearbeitet || '';
         const incomingDatumVon = incomingPolygon.datum_von || '';
         const incomingDatumBis = incomingPolygon.datum_bis || '';
@@ -359,12 +359,11 @@ app.post('/api/sync', async (req, res) => {
         const existingDatumBis = existing.datum_bis || '';
         const existingFarbe = existing.farbe || '';
         
-        // Prüfe ob Client das Polygon gelöscht hat (Felder wurden geleert)
-        const wasDeleted = (existingBearbeitet !== '' || existingFarbe !== '' || existingDatumVon !== '' || existingDatumBis !== '') &&
-                          (incomingBearbeitet === '' && incomingFarbe === '' && incomingDatumVon === '' && incomingDatumBis === '');
+        // Prüfe ob Client das Polygon zum Löschen markiert hat (bearbeitet = "x")
+        const isMarkedForDeletion = incomingBearbeitet === 'x';
         
-        if (wasDeleted) {
-          // Client hat gelöscht - übernehme die Löschung
+        if (isMarkedForDeletion) {
+          // Client hat zum Löschen markiert - lösche alle Felder
           updateFields.push('bearbeitet = $' + (updateValues.length + 1));
           updateValues.push('');
           updateFields.push('datum_von = $' + (updateValues.length + 1));
@@ -375,7 +374,7 @@ app.post('/api/sync', async (req, res) => {
           updateValues.push('');
           hasChanges = true;
           deletedCount++;
-          console.log(`Löschung erkannt für Polygon ${incomingPolygon.id}`);
+          console.log(`Löschung durch "x" Markierung für Polygon ${incomingPolygon.id}`);
         } else {
           // Normale Updates nur für leere Felder (Bidirektionale Sync)
           
@@ -386,8 +385,8 @@ app.post('/api/sync', async (req, res) => {
             hasChanges = true;
           }
           
-          // Bearbeitet: Update wenn Server leer und Client gefüllt ODER Client leer und Server gefüllt (Löschung)
-          if ((!existingBearbeitet && incomingBearbeitet) || (existingBearbeitet && !incomingBearbeitet)) {
+          // Bearbeitet: Update nur wenn Server leer und Client gefüllt (aber nicht "x")
+          if (!existingBearbeitet && incomingBearbeitet && incomingBearbeitet !== 'x') {
             updateFields.push('bearbeitet = $' + (updateValues.length + 1));
             updateValues.push(incomingBearbeitet);
             hasChanges = true;
@@ -556,7 +555,7 @@ app.get('/api/project/:projectName', async (req, res) => {
     
     const project = projectResult.rows[0];
     
-    const polygonsResult = await client.query(`
+    const polygonsResult = await pool.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, 
              created_at, updated_at, source
       FROM polygons 
