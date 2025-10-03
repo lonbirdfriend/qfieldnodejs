@@ -25,25 +25,34 @@
         }
 
         header {
-            padding: 40px 0;
+            padding: 20px 0;
             border-bottom: 1px solid #1e2139;
-            margin-bottom: 40px;
+            margin-bottom: 32px;
             text-align: center;
         }
 
         h1 {
-            font-size: 3rem;
+            font-size: 2.2rem;
             font-weight: 700;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            margin-bottom: 10px;
+            margin: 0;
         }
 
-        .subtitle {
-            color: #8b92b8;
-            font-size: 1.2rem;
+        .project-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0;
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #1e2139;
+            margin-bottom: 32px;
         }
 
         .projects-grid {
@@ -187,20 +196,28 @@
         }
 
         .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            padding: 16px 32px;
-            border-radius: 12px;
-            font-size: 1.1rem;
+            padding: 12px 16px;
+            border-radius: 50%;
+            font-size: 1.2rem;
             cursor: pointer;
-            margin-bottom: 32px;
             transition: all 0.3s;
             font-weight: 600;
+            z-index: 1000;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .back-button:hover {
-            transform: translateX(-6px);
+            transform: scale(1.1);
             box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
         }
 
@@ -224,13 +241,6 @@
             margin-bottom: 32px;
             color: #e4e6eb;
             text-align: center;
-        }
-
-        .chart-subtitle {
-            font-size: 1rem;
-            color: #8b92b8;
-            text-align: center;
-            margin-bottom: 24px;
         }
 
         .map-container {
@@ -297,36 +307,47 @@
             box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
         }
 
-        .worker-section {
-            margin-bottom: 40px;
-        }
-
-        .worker-header {
+        .sunburst-container {
             display: flex;
+            justify-content: center;
             align-items: center;
-            gap: 16px;
+            min-height: 500px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
             margin-bottom: 24px;
-            padding: 20px;
-            background: linear-gradient(135deg, #1a1f3a 0%, #151829 100%);
-            border-radius: 16px;
-            border: 1px solid #252a47;
+            border-bottom: 1px solid #252a47;
         }
 
-        .worker-color {
-            width: 24px;
-            height: 24px;
-            border-radius: 6px;
+        .tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: #8b92b8;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+            font-size: 0.9rem;
+            font-weight: 500;
         }
 
-        .worker-name {
-            font-size: 1.4rem;
-            font-weight: 600;
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab:hover {
             color: #e4e6eb;
         }
 
-        .worker-stats {
-            font-size: 0.9rem;
-            color: #8b92b8;
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
         }
 
         .timeline-container {
@@ -386,26 +407,6 @@
             font-size: 0.85rem;
             color: #8b92b8;
         }
-
-        .chart-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 32px;
-            margin-bottom: 32px;
-        }
-
-        @media (max-width: 1200px) {
-            .chart-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .sunburst-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 500px;
-        }
     </style>
 </head>
 
@@ -413,7 +414,6 @@
     <div class="container">
         <header>
             <h1>QField Dashboard</h1>
-            <p class="subtitle">Projektübersicht und detaillierte Statistiken</p>
         </header>
 
         <div id="projects-view">
@@ -424,7 +424,7 @@
         </div>
 
         <div id="detail-view" class="detail-view">
-            <button class="back-button" onclick="showProjectsList()">← Zurück zur Übersicht</button>
+            <button class="back-button" onclick="showProjectsList()">←</button>
             <div id="detail-content"></div>
         </div>
     </div>
@@ -502,7 +502,7 @@
                         <div class="stats-grid">
                             <div class="stat-item">
                                 <span class="stat-value">${project.totalPolygons}</span>
-                                <span class="stat-label">Polygone</span>
+                                <span class="stat-label">Bereiche</span>
                             </div>
                             <div class="stat-item">
                                 <span class="stat-value">${project.completedPolygons}</span>
@@ -570,69 +570,30 @@
             const workers = Object.values(stats.workerStats || {});
             
             container.innerHTML = `
-                <div class="chart-container">
-                    <div class="chart-title">${project.projectName}</div>
-                    <div class="chart-subtitle">Projektübersicht und Statistiken</div>
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <span class="stat-value">${stats.totalPolygons}</span>
-                            <span class="stat-label">Gesamt Polygone</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-value">${stats.completedPolygons}</span>
-                            <span class="stat-label">Bearbeitet</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-value">${stats.totalArea.toFixed(1)}</span>
-                            <span class="stat-label">Hektar Gesamt</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-value">${stats.completedArea.toFixed(1)}</span>
-                            <span class="stat-label">Hektar Bearbeitet</span>
-                        </div>
-                    </div>
-                </div>
+                <div class="project-title">${project.projectName}</div>
 
                 <div class="map-container">
-                    <div class="chart-title">🗺️ Kartenansicht</div>
                     <div id="map"></div>
                 </div>
 
-                <div class="chart-grid">
-                    <div class="chart-container">
-                        <div class="chart-title">🌅 Sunburst Diagramm</div>
-                        <div class="chart-subtitle">Hierarchische Darstellung nach Bearbeiter und Zeit</div>
-                        <div class="sunburst-container" id="sunburst-chart"></div>
-                    </div>
-
-                    <div class="chart-container">
-                        <div class="chart-title">📊 Mitarbeiterleistung</div>
-                        <div class="chart-subtitle">Fläche pro Bearbeiter</div>
-                        <div id="worker-chart"></div>
-                    </div>
+                <div class="chart-container">
+                    <div class="chart-title">Projektanteile</div>
+                    <div class="sunburst-container" id="sunburst-chart"></div>
                 </div>
 
                 <div class="chart-container">
-                    <div class="chart-title">📈 Zeitlicher Verlauf</div>
-                    <div class="chart-subtitle">Tägliche Leistung über Zeit</div>
-                    <div id="timeline-chart"></div>
-                </div>
-
-                <div class="chart-container">
-                    <div class="chart-title">👥 Detailansicht nach Bearbeitern</div>
-                    <div class="chart-subtitle">Chronologische Auflistung pro Person</div>
-                    <div id="worker-details"></div>
+                    <div class="chart-title">Chronologische Auflistung</div>
+                    <div class="tabs" id="timeline-tabs"></div>
+                    <div id="timeline-content"></div>
                 </div>
             `;
 
             renderMap(project.data);
-            renderSunburstChart(project.data, workers);
-            renderWorkerChart(workers);
-            renderTimelineChart(project.data);
-            renderWorkerDetails(project.data, workers);
+            renderProjectSunburst(project.info, workers);
+            renderTimelineTabs(project.data, workers);
         }
 
-        // Schlichte Karte ohne Legende
+        // Schlichte Karte ohne Titel
         function renderMap(polygons) {
             const container = document.getElementById('map');
             container.innerHTML = '';
@@ -720,7 +681,7 @@
                         
                         tooltip.transition().duration(200).style('opacity', 1);
                         tooltip.html(`
-                            <strong>Polygon ${poly.id}</strong><br/>
+                            <strong>Bereich ${poly.id}</strong><br/>
                             ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
                             ${poly.bearbeitet || 'Nicht bearbeitet'}
                         `)
@@ -736,13 +697,13 @@
             container.append(svg.node());
         }
 
-        // Sunburst Diagramm
-        function renderSunburstChart(polygons, workers) {
+        // Neues Sunburst basierend auf Settings-Anteilen
+        function renderProjectSunburst(projectInfo, workers) {
             const container = document.getElementById('sunburst-chart');
             container.innerHTML = '';
 
-            if (!workers || workers.length === 0) {
-                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Daten für Sunburst verfügbar</p>';
+            if (!projectInfo || !projectInfo.workerPercentages) {
+                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Projektanteile verfügbar</p>';
                 return;
             }
 
@@ -750,19 +711,39 @@
             const height = 500;
             const radius = Math.min(width, height) / 2;
 
-            // Hierarchische Daten erstellen
+            // Erste Ebene: Gesamtprojekt (Settings-Anteile)
+            const settingsData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => ({
+                name: projectInfo.colorWorkers[color] || color,
+                color: color,
+                value: percentage,
+                children: []
+            }));
+
+            // Zweite Ebene: Ist-Daten nach Bearbeiter und Datum
+            workers.forEach(worker => {
+                const settingsWorker = settingsData.find(s => s.color === worker.color);
+                if (settingsWorker && worker.chronology) {
+                    // Gruppiere nach Datum
+                    const dateGroups = {};
+                    worker.chronology.forEach(entry => {
+                        const date = entry.datum_von || entry.datum_bis || 'Unbekannt';
+                        if (!dateGroups[date]) {
+                            dateGroups[date] = 0;
+                        }
+                        dateGroups[date] += entry.area;
+                    });
+
+                    settingsWorker.children = Object.entries(dateGroups).map(([date, area]) => ({
+                        name: date,
+                        value: area,
+                        color: worker.color
+                    }));
+                }
+            });
+
             const hierarchyData = {
                 name: "Projekt",
-                children: workers.map(worker => ({
-                    name: worker.name,
-                    color: worker.color,
-                    value: worker.area,
-                    children: worker.chronology ? worker.chronology.map(entry => ({
-                        name: `${entry.datum_von || entry.datum_bis}`,
-                        value: entry.area,
-                        color: worker.color
-                    })) : []
-                }))
+                children: settingsData
             };
 
             const root = d3.hierarchy(hierarchyData)
@@ -803,10 +784,11 @@
                     d3.select(this).attr("opacity", 1);
                     
                     tooltip.transition().duration(200).style('opacity', 1);
+                    const displayValue = d.depth === 1 ? `${d.value.toFixed(1)}%` : `${d.value.toFixed(2)} ha`;
                     tooltip.html(`
                         <strong>${d.data.name}</strong><br/>
-                        ${d.value.toFixed(2)} ha<br/>
-                        ${((d.value / root.value) * 100).toFixed(1)}% des Gesamtprojekts
+                        ${displayValue}<br/>
+                        ${d.depth === 1 ? 'Geplanter Anteil' : 'Bearbeitete Fläche'}
                     `)
                     .style('left', (event.pageX + 10) + 'px')
                     .style('top', (event.pageY - 10) + 'px');
@@ -819,84 +801,12 @@
             container.append(svg.node());
         }
 
-        // Mitarbeiter Balkendiagramm
-        function renderWorkerChart(workers) {
-            const container = document.getElementById('worker-chart');
-            container.innerHTML = '';
+        // Timeline mit Tabs
+        function renderTimelineTabs(polygons, workers) {
+            const tabsContainer = document.getElementById('timeline-tabs');
+            const contentContainer = document.getElementById('timeline-content');
 
-            if (!workers || workers.length === 0) {
-                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 20px;">Keine Mitarbeiterdaten verfügbar</p>';
-                return;
-            }
-
-            const width = container.clientWidth || 400;
-            const height = 300;
-            const marginTop = 20;
-            const marginRight = 30;
-            const marginBottom = 60;
-            const marginLeft = 60;
-
-            // Scales
-            const x = d3.scaleBand()
-                .domain(workers.map(d => d.name))
-                .range([marginLeft, width - marginRight])
-                .padding(0.3);
-
-            const y = d3.scaleLinear()
-                .domain([0, d3.max(workers, d => d.area)])
-                .nice()
-                .range([height - marginBottom, marginTop]);
-
-            // SVG
-            const svg = d3.create("svg")
-                .attr("width", width)
-                .attr("height", height)
-                .attr("viewBox", [0, 0, width, height]);
-
-            // Bars mit Animation
-            svg.append("g")
-                .selectAll("rect")
-                .data(workers)
-                .join("rect")
-                .attr("x", d => x(d.name))
-                .attr("y", height - marginBottom)
-                .attr("width", x.bandwidth())
-                .attr("height", 0)
-                .attr("fill", d => colorMap[d.color] || '#667eea')
-                .attr("rx", 6)
-                .transition()
-                .duration(1000)
-                .delay((d, i) => i * 100)
-                .attr("y", d => y(d.area))
-                .attr("height", d => height - marginBottom - y(d.area));
-
-            // X-axis
-            svg.append("g")
-                .attr("transform", `translate(0,${height - marginBottom})`)
-                .call(d3.axisBottom(x))
-                .selectAll("text")
-                .attr("transform", "rotate(-45)")
-                .style("text-anchor", "end")
-                .attr("font-size", "12px");
-
-            // Y-axis
-            svg.append("g")
-                .attr("transform", `translate(${marginLeft},0)`)
-                .call(d3.axisLeft(y))
-                .call(g => g.select(".domain").remove())
-                .call(g => g.selectAll(".tick line").clone()
-                    .attr("x2", width - marginLeft - marginRight)
-                    .attr("stroke-opacity", 0.1));
-
-            container.append(svg.node());
-        }
-
-        // Zeitlicher Verlauf
-        function renderTimelineChart(polygons) {
-            const container = document.getElementById('timeline-chart');
-            container.innerHTML = '';
-
-            // Gruppiere nach Datum
+            // Gruppiere Daten nach Bearbeiter und Datum
             const dailyData = {};
             
             polygons.forEach(poly => {
@@ -907,161 +817,80 @@
                     
                     dates.forEach(date => {
                         if (date) {
-                            if (!dailyData[date]) {
-                                dailyData[date] = 0;
+                            const key = `${date}_${poly.bearbeitet}`;
+                            if (!dailyData[key]) {
+                                dailyData[key] = {
+                                    date: date,
+                                    worker: poly.bearbeitet,
+                                    area: 0,
+                                    polygonCount: 0,
+                                    color: poly.farbe || 'default'
+                                };
                             }
-                            dailyData[date] += parseFloat(poly.flaeche_ha || 0);
+                            dailyData[key].area += parseFloat(poly.flaeche_ha || 0);
+                            dailyData[key].polygonCount += 1;
                         }
                     });
                 }
             });
 
-            const sortedData = Object.entries(dailyData)
-                .map(([date, area]) => ({ date: new Date(date.split('.').reverse().join('-')), area }))
-                .sort((a, b) => a.date - b.date);
+            const sortedData = Object.values(dailyData)
+                .sort((a, b) => new Date(b.date.split('.').reverse().join('-')) - new Date(a.date.split('.').reverse().join('-')));
 
-            if (sortedData.length === 0) {
-                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 20px;">Keine Zeitdaten verfügbar</p>';
-                return;
-            }
+            // Erstelle Tabs
+            const workerNames = [...new Set(workers.map(w => w.name))];
+            const tabs = ['Gesamt', ...workerNames];
 
-            const width = container.clientWidth || 800;
-            const height = 300;
-            const marginTop = 20;
-            const marginRight = 30;
-            const marginBottom = 40;
-            const marginLeft = 60;
+            const tabsHtml = tabs.map((tab, index) => 
+                `<button class="tab ${index === 0 ? 'active' : ''}" onclick="switchTab('${tab}', ${index})">${tab}</button>`
+            ).join('');
 
-            // Scales
-            const x = d3.scaleTime()
-                .domain(d3.extent(sortedData, d => d.date))
-                .range([marginLeft, width - marginRight]);
+            tabsContainer.innerHTML = tabsHtml;
 
-            const y = d3.scaleLinear()
-                .domain([0, d3.max(sortedData, d => d.area)])
-                .nice()
-                .range([height - marginBottom, marginTop]);
+            // Erstelle Tab-Inhalte
+            const tabContents = tabs.map((tab, index) => {
+                const isGesamt = index === 0;
+                const filteredData = isGesamt ? sortedData : sortedData.filter(item => item.worker === tab);
 
-            // Line generator
-            const line = d3.line()
-                .x(d => x(d.date))
-                .y(d => y(d.area))
-                .curve(d3.curveMonotoneX);
-
-            // Area generator
-            const area = d3.area()
-                .x(d => x(d.date))
-                .y0(height - marginBottom)
-                .y1(d => y(d.area))
-                .curve(d3.curveMonotoneX);
-
-            // SVG
-            const svg = d3.create("svg")
-                .attr("width", width)
-                .attr("height", height)
-                .attr("viewBox", [0, 0, width, height]);
-
-            // Area
-            svg.append("path")
-                .datum(sortedData)
-                .attr("fill", "url(#gradient)")
-                .attr("d", area);
-
-            // Gradient definition
-            const gradient = svg.append("defs")
-                .append("linearGradient")
-                .attr("id", "gradient")
-                .attr("gradientUnits", "userSpaceOnUse")
-                .attr("x1", 0).attr("y1", height)
-                .attr("x2", 0).attr("y2", 0);
-
-            gradient.append("stop")
-                .attr("offset", "0%")
-                .attr("stop-color", "#667eea")
-                .attr("stop-opacity", 0.1);
-
-            gradient.append("stop")
-                .attr("offset", "100%")
-                .attr("stop-color", "#667eea")
-                .attr("stop-opacity", 0.8);
-
-            // Line
-            svg.append("path")
-                .datum(sortedData)
-                .attr("fill", "none")
-                .attr("stroke", "#667eea")
-                .attr("stroke-width", 3)
-                .attr("d", line);
-
-            // Points
-            svg.selectAll("circle")
-                .data(sortedData)
-                .join("circle")
-                .attr("cx", d => x(d.date))
-                .attr("cy", d => y(d.area))
-                .attr("r", 5)
-                .attr("fill", "#667eea")
-                .attr("stroke", "#0a0e27")
-                .attr("stroke-width", 2);
-
-            // X-axis
-            svg.append("g")
-                .attr("transform", `translate(0,${height - marginBottom})`)
-                .call(d3.axisBottom(x).tickFormat(d3.timeFormat("%d.%m")));
-
-            // Y-axis
-            svg.append("g")
-                .attr("transform", `translate(${marginLeft},0)`)
-                .call(d3.axisLeft(y))
-                .call(g => g.select(".domain").remove())
-                .call(g => g.selectAll(".tick line").clone()
-                    .attr("x2", width - marginLeft - marginRight)
-                    .attr("stroke-opacity", 0.1));
-
-            container.append(svg.node());
-        }
-
-        // Detailansicht nach Bearbeitern
-        function renderWorkerDetails(polygons, workers) {
-            const container = document.getElementById('worker-details');
-            container.innerHTML = '';
-
-            if (!workers || workers.length === 0) {
-                container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 20px;">Keine Bearbeiterdaten verfügbar</p>';
-                return;
-            }
-
-            const html = workers.map(worker => {
-                const chronologyHtml = worker.chronology && worker.chronology.length > 0 
-                    ? worker.chronology.map(entry => `
+                const itemsHtml = filteredData.map(item => {
+                    const color = colorMap[item.color] || '#667eea';
+                    return `
                         <div class="timeline-item">
-                            <div class="timeline-date">${entry.datum_von || entry.datum_bis || 'Unbekannt'}</div>
+                            <div class="timeline-date">${item.date}</div>
                             <div class="timeline-content">
-                                <div class="timeline-worker">Polygon ${entry.id}</div>
-                                <div class="timeline-details">${entry.area.toFixed(2)} ha</div>
+                                <div class="timeline-worker" style="color: ${color}">
+                                    ${item.worker}
+                                </div>
+                                <div class="timeline-details">
+                                    ${item.area.toFixed(2)} ha • ${item.polygonCount} Bereiche
+                                </div>
                             </div>
                         </div>
-                    `).join('')
-                    : '<p style="color: #8b92b8; padding: 20px;">Keine chronologischen Daten verfügbar</p>';
+                    `;
+                }).join('');
 
                 return `
-                    <div class="worker-section">
-                        <div class="worker-header">
-                            <div class="worker-color" style="background: ${colorMap[worker.color] || '#667eea'}"></div>
-                            <div class="worker-name">${worker.name}</div>
-                            <div class="worker-stats">
-                                ${worker.area.toFixed(2)} ha • ${worker.polygonCount} Polygone • ${worker.percentage.toFixed(1)}%
-                            </div>
-                        </div>
+                    <div class="tab-content ${index === 0 ? 'active' : ''}" id="tab-${index}">
                         <div class="timeline-container">
-                            ${chronologyHtml}
+                            ${itemsHtml || '<p style="color: #8b92b8; padding: 20px;">Keine Daten verfügbar</p>'}
                         </div>
                     </div>
                 `;
             }).join('');
 
-            container.innerHTML = html;
+            contentContainer.innerHTML = tabContents;
         }
+
+        // Tab-Switching Funktion
+        window.switchTab = function(tabName, index) {
+            // Entferne active Klasse von allen Tabs und Contents
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            // Füge active Klasse zum geklickten Tab hinzu
+            document.querySelectorAll('.tab')[index].classList.add('active');
+            document.getElementById(`tab-${index}`).classList.add('active');
+        };
 
         // Global functions für onclick events
         window.showProjectDetail = showProjectDetail;
