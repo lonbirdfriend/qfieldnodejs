@@ -392,22 +392,22 @@ app.post('/api/sync', async (req, res) => {
             hasChanges = true;
           }
 
-          // Datum_von
-          if ((!existingDatumVon && incomingDatumVon) || (existingDatumVon && !incomingDatumVon)) {
+          // Datum_von: Update nur wenn Server leer und Client gefüllt
+          if (!existingDatumVon && incomingDatumVon) {
             updateFields.push('datum_von = $' + (updateValues.length + 1));
             updateValues.push(incomingDatumVon);
             hasChanges = true;
           }
 
-          // Datum_bis
-          if ((!existingDatumBis && incomingDatumBis) || (existingDatumBis && !incomingDatumBis)) {
+          // Datum_bis: Update nur wenn Server leer und Client gefüllt
+          if (!existingDatumBis && incomingDatumBis) {
             updateFields.push('datum_bis = $' + (updateValues.length + 1));
             updateValues.push(incomingDatumBis);
             hasChanges = true;
           }
 
-          // Farbe
-          if ((!existingFarbe && incomingFarbe) || (existingFarbe && !incomingFarbe)) {
+          // Farbe: Update nur wenn Server leer und Client gefüllt
+          if (!existingFarbe && incomingFarbe) {
             updateFields.push('farbe = $' + (updateValues.length + 1));
             updateValues.push(incomingFarbe);
             hasChanges = true;
