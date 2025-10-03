@@ -20,7 +20,7 @@
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -106,19 +106,12 @@
         }
 
         .progress-bar {
-            height: 8px;
+            height: 12px;
             background: #1e2139;
-            border-radius: 4px;
+            border-radius: 6px;
             overflow: hidden;
             margin: 16px 0;
             position: relative;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            border-radius: 4px;
-            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .worker-segments {
@@ -134,40 +127,49 @@
             height: 100%;
             transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
+            border-right: 1px solid #0a0e27;
         }
 
         .worker-segment:hover {
             filter: brightness(1.3);
+            transform: scaleY(1.1);
         }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 16px;
-            margin-top: 20px;
+            margin-bottom: 32px;
         }
 
         .stat-item {
             text-align: center;
-            padding: 12px;
-            background: rgba(102, 126, 234, 0.1);
-            border-radius: 8px;
-            border: 1px solid rgba(102, 126, 234, 0.2);
+            padding: 20px;
+            background: linear-gradient(135deg, #1a1f3a 0%, #151829 100%);
+            border-radius: 12px;
+            border: 1px solid #252a47;
+            transition: all 0.3s;
+        }
+
+        .stat-item:hover {
+            transform: translateY(-2px);
+            border-color: #667eea;
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
         }
 
         .stat-value {
-            font-size: 1.75rem;
+            font-size: 2.2rem;
             font-weight: 700;
             color: #667eea;
             display: block;
+            margin-bottom: 8px;
         }
 
         .stat-label {
-            font-size: 0.75rem;
+            font-size: 0.85rem;
             color: #8b92b8;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-top: 4px;
         }
 
         .detail-view {
@@ -210,10 +212,25 @@
         }
 
         .chart-title {
-            font-size: 1.25rem;
+            font-size: 1.4rem;
             font-weight: 600;
             margin-bottom: 24px;
             color: #e4e6eb;
+        }
+
+        .map-container {
+            background: linear-gradient(135deg, #1a1f3a 0%, #151829 100%);
+            border: 1px solid #252a47;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        #map {
+            width: 100%;
+            height: 500px;
+            border-radius: 8px;
+            overflow: hidden;
         }
 
         .worker-legend {
@@ -230,6 +247,7 @@
             padding: 8px 16px;
             background: rgba(102, 126, 234, 0.1);
             border-radius: 8px;
+            border: 1px solid rgba(102, 126, 234, 0.2);
         }
 
         .legend-color {
@@ -241,6 +259,7 @@
         .legend-label {
             font-size: 0.875rem;
             color: #e4e6eb;
+            font-weight: 500;
         }
 
         .legend-value {
@@ -249,47 +268,45 @@
             margin-left: 4px;
         }
 
-        .map-container {
-            background: #151829;
-            border-radius: 16px;
-            padding: 32px;
+        .daily-performance {
             margin-top: 24px;
-            border: 1px solid #252a47;
         }
 
-        #map {
-            width: 100%;
-            height: 600px;
-        }
-
-        .timeline-container {
-            margin-top: 32px;
-        }
-
-        .timeline-item {
+        .performance-item {
             display: flex;
-            gap: 16px;
-            padding: 16px;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
             background: rgba(102, 126, 234, 0.05);
             border-left: 3px solid #667eea;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
             border-radius: 0 8px 8px 0;
             transition: all 0.3s;
         }
 
-        .timeline-item:hover {
+        .performance-item:hover {
             background: rgba(102, 126, 234, 0.1);
             transform: translateX(4px);
         }
 
-        .timeline-date {
+        .performance-date {
             font-weight: 600;
             color: #667eea;
-            min-width: 120px;
+            min-width: 100px;
         }
 
-        .timeline-content {
+        .performance-worker {
+            font-weight: 500;
+            color: #e4e6eb;
             flex: 1;
+            margin-left: 16px;
+        }
+
+        .performance-area {
+            font-weight: 600;
+            color: #4ade80;
+            min-width: 80px;
+            text-align: right;
         }
 
         .loading {
@@ -326,6 +343,18 @@
             stroke: #1e2139;
             stroke-opacity: 0.7;
         }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(26, 31, 58, 0.95);
+            border: 1px solid #252a47;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.875rem;
+            pointer-events: none;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
     </style>
 </head>
 <body>
@@ -354,10 +383,16 @@
 
         const colorMap = {
             'r': '#ef4444',
-            'g': '#10b981',
+            'g': '#10b981', 
             'b': '#3b82f6',
             'y': '#f59e0b'
         };
+
+        // Tooltip für Interaktionen
+        const tooltip = d3.select('body')
+            .append('div')
+            .attr('class', 'tooltip')
+            .style('opacity', 0);
 
         async function loadProjects() {
             try {
@@ -483,7 +518,7 @@
             
             container.innerHTML = `
                 <div class="chart-container">
-                    <div class="chart-title">${project.projectName} - Übersicht</div>
+                    <div class="chart-title">${project.projectName} - Projektübersicht</div>
                     <div class="stats-grid">
                         <div class="stat-item">
                             <span class="stat-value">${stats.totalPolygons}</span>
@@ -494,36 +529,37 @@
                             <span class="stat-label">Bearbeitet</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-value">${stats.totalArea.toFixed(2)}</span>
+                            <span class="stat-value">${stats.totalArea.toFixed(1)}</span>
                             <span class="stat-label">Hektar Gesamt</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-value">${stats.completedArea.toFixed(2)}</span>
+                            <span class="stat-value">${stats.completedArea.toFixed(1)}</span>
                             <span class="stat-label">Hektar Bearbeitet</span>
                         </div>
                     </div>
                 </div>
 
+                <div class="map-container">
+                    <div class="chart-title">🗺️ Kartenansicht - Aktueller Projektstand</div>
+                    <div id="map"></div>
+                </div>
+
                 <div class="chart-container">
-                    <div class="chart-title">Mitarbeiterverteilung</div>
+                    <div class="chart-title">📊 Leistung nach Bearbeiter</div>
                     <div id="worker-chart"></div>
                     <div class="worker-legend" id="worker-legend"></div>
                 </div>
 
                 <div class="chart-container">
-                    <div class="chart-title">Chronologischer Verlauf</div>
-                    <div id="timeline-chart"></div>
-                </div>
-
-                <div class="map-container">
-                    <div class="chart-title">Kartenansicht</div>
-                    <div id="map"></div>
+                    <div class="chart-title">📈 Tägliche Leistung (gruppiert nach Datum & Bearbeiter)</div>
+                    <div id="daily-performance-chart"></div>
+                    <div class="daily-performance" id="daily-performance-list"></div>
                 </div>
             `;
 
-            renderWorkerChart(workers);
-            renderTimeline(workers);
             renderMap(project.data);
+            renderWorkerChart(workers);
+            renderDailyPerformance(project.data);
         }
 
         function renderWorkerChart(workers) {
@@ -588,45 +624,11 @@
             });
         }
 
-        function renderTimeline(workers) {
-            const timeline = document.getElementById('timeline-chart');
-            const allEntries = [];
 
-            workers.forEach(worker => {
-                if (worker.chronology) {
-                    worker.chronology.forEach(entry => {
-                        if (entry.datum_von || entry.datum_bis) {
-                            allEntries.push({
-                                date: entry.datum_von || entry.datum_bis,
-                                worker: worker.name,
-                                color: worker.color,
-                                area: entry.area,
-                                id: entry.id
-                            });
-                        }
-                    });
-                }
-            });
-
-            allEntries.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-            const html = allEntries.map(entry => `
-                <div class="timeline-item">
-                    <div class="timeline-date">${new Date(entry.date).toLocaleDateString('de-DE')}</div>
-                    <div class="timeline-content">
-                        <div style="color: ${colorMap[entry.color]}; font-weight: 600;">${entry.worker}</div>
-                        <div style="color: #8b92b8; font-size: 0.875rem;">
-                            Polygon ${entry.id} - ${entry.area.toFixed(2)} ha
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-
-            timeline.innerHTML = `<div class="timeline-container">${html || '<p style="color: #8b92b8;">Keine chronologischen Daten verfügbar</p>'}</div>`;
-        }
 
         function renderMap(polygons) {
             const mapDiv = document.getElementById('map');
+            mapDiv.innerHTML = ''; // Clear previous content
             
             if (!polygons || polygons.length === 0) {
                 mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Geometriedaten verfügbar</p>';
@@ -641,61 +643,303 @@
             }
 
             const width = mapDiv.clientWidth;
-            const height = 600;
+            const height = 500;
 
             const svg = d3.select('#map')
                 .append('svg')
                 .attr('width', '100%')
                 .attr('height', height)
-                .attr('viewBox', `0 0 ${width} ${height}`);
+                .attr('viewBox', `0 0 ${width} ${height}`)
+                .style('background', '#0f1419')
+                .style('border-radius', '8px');
 
-            const coordinates = [];
+            // Sammle alle Koordinaten für Bounds-Berechnung
+            const allCoordinates = [];
+            const polygonData = [];
+
             validPolygons.forEach(poly => {
                 const matches = poly.geometry.match(/[\d.]+/g);
-                if (matches) {
+                if (matches && matches.length >= 4) {
+                    const coords = [];
                     for (let i = 0; i < matches.length; i += 2) {
-                        coordinates.push([parseFloat(matches[i]), parseFloat(matches[i + 1])]);
+                        const x = parseFloat(matches[i]);
+                        const y = parseFloat(matches[i + 1]);
+                        if (!isNaN(x) && !isNaN(y)) {
+                            coords.push([x, y]);
+                            allCoordinates.push([x, y]);
+                        }
+                    }
+                    if (coords.length > 0) {
+                        polygonData.push({
+                            ...poly,
+                            coordinates: coords
+                        });
                     }
                 }
             });
 
-            if (coordinates.length === 0) {
+            if (allCoordinates.length === 0) {
                 mapDiv.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Konnte Koordinaten nicht verarbeiten</p>';
                 return;
             }
 
-            const xExtent = d3.extent(coordinates, d => d[0]);
-            const yExtent = d3.extent(coordinates, d => d[1]);
-
+            // Berechne Bounds mit Padding
+            const xExtent = d3.extent(allCoordinates, d => d[0]);
+            const yExtent = d3.extent(allCoordinates, d => d[1]);
+            
+            const padding = 30;
             const xScale = d3.scaleLinear()
                 .domain(xExtent)
-                .range([50, width - 50]);
+                .range([padding, width - padding]);
 
             const yScale = d3.scaleLinear()
                 .domain(yExtent)
-                .range([height - 50, 50]);
+                .range([height - padding, padding]);
 
-            validPolygons.forEach(poly => {
-                const matches = poly.geometry.match(/[\d.]+/g);
-                if (!matches) return;
-
-                const points = [];
-                for (let i = 0; i < matches.length; i += 2) {
-                    points.push([xScale(parseFloat(matches[i])), yScale(parseFloat(matches[i + 1]))]);
+            // Zeichne Polygone
+            polygonData.forEach((poly, index) => {
+                const scaledCoords = poly.coordinates.map(([x, y]) => [xScale(x), yScale(y)]);
+                
+                // Bestimme Farbe und Opacity basierend auf Status
+                let color = '#667eea';
+                let opacity = 0.3;
+                let strokeWidth = 1;
+                
+                if (poly.farbe && colorMap[poly.farbe]) {
+                    color = colorMap[poly.farbe];
+                }
+                
+                if (poly.bearbeitet && poly.bearbeitet !== '') {
+                    opacity = 0.8;
+                    strokeWidth = 2;
                 }
 
-                const color = poly.farbe && colorMap[poly.farbe] ? colorMap[poly.farbe] : '#667eea';
-                const opacity = poly.bearbeitet ? 0.7 : 0.2;
-
-                svg.append('path')
-                    .datum(points)
-                    .attr('d', d3.line())
+                // Erstelle Polygon-Path
+                const pathData = `M${scaledCoords.map(d => d.join(',')).join('L')}Z`;
+                
+                const polygonElement = svg.append('path')
+                    .attr('d', pathData)
                     .attr('fill', color)
                     .attr('stroke', color)
-                    .attr('stroke-width', 2)
+                    .attr('stroke-width', strokeWidth)
                     .attr('opacity', opacity)
-                    .append('title')
-                    .text(`Polygon ${poly.id}\n${poly.bearbeitet || 'Nicht bearbeitet'}\n${poly.flaeche_ha} ha`);
+                    .style('cursor', 'pointer')
+                    .on('mouseover', function(event) {
+                        d3.select(this)
+                            .transition()
+                            .duration(200)
+                            .attr('opacity', Math.min(opacity + 0.3, 1))
+                            .attr('stroke-width', strokeWidth + 1);
+                        
+                        tooltip.transition()
+                            .duration(200)
+                            .style('opacity', 1);
+                        
+                        const tooltipContent = `
+                            <strong>Polygon ${poly.id}</strong><br/>
+                            Fläche: ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
+                            ${poly.bearbeitet ? `Bearbeiter: ${poly.bearbeitet}<br/>` : 'Nicht bearbeitet<br/>'}
+                            ${poly.datum_von ? `Von: ${poly.datum_von}<br/>` : ''}
+                            ${poly.datum_bis ? `Bis: ${poly.datum_bis}` : ''}
+                        `;
+                        
+                        tooltip.html(tooltipContent)
+                            .style('left', (event.pageX + 10) + 'px')
+                            .style('top', (event.pageY - 10) + 'px');
+                    })
+                    .on('mouseout', function() {
+                        d3.select(this)
+                            .transition()
+                            .duration(200)
+                            .attr('opacity', opacity)
+                            .attr('stroke-width', strokeWidth);
+                        
+                        tooltip.transition()
+                            .duration(200)
+                            .style('opacity', 0);
+                    });
+            });
+
+            // Legende für Karte
+            const legendData = [
+                { color: '#667eea', label: 'Nicht bearbeitet', opacity: 0.3 },
+                { color: '#ef4444', label: 'Rot (bearbeitet)', opacity: 0.8 },
+                { color: '#10b981', label: 'Grün (bearbeitet)', opacity: 0.8 },
+                { color: '#3b82f6', label: 'Blau (bearbeitet)', opacity: 0.8 },
+                { color: '#f59e0b', label: 'Gelb (bearbeitet)', opacity: 0.8 }
+            ];
+
+            const legend = svg.append('g')
+                .attr('transform', `translate(${width - 200}, 20)`);
+
+            legendData.forEach((item, i) => {
+                const legendItem = legend.append('g')
+                    .attr('transform', `translate(0, ${i * 25})`);
+
+                legendItem.append('rect')
+                    .attr('width', 18)
+                    .attr('height', 18)
+                    .attr('fill', item.color)
+                    .attr('opacity', item.opacity)
+                    .attr('stroke', item.color)
+                    .attr('stroke-width', 1)
+                    .attr('rx', 3);
+
+                legendItem.append('text')
+                    .attr('x', 25)
+                    .attr('y', 14)
+                    .attr('font-size', '12px')
+                    .attr('fill', '#e4e6eb')
+                    .text(item.label);
+            });
+        }
+
+        function renderDailyPerformance(polygons) {
+            // Gruppiere nach Datum und Bearbeiter
+            const dailyData = {};
+            
+            polygons.forEach(poly => {
+                if (poly.bearbeitet && poly.bearbeitet !== '' && poly.bearbeitet !== 'x') {
+                    const dates = [];
+                    if (poly.datum_von) dates.push(poly.datum_von);
+                    if (poly.datum_bis && poly.datum_bis !== poly.datum_von) dates.push(poly.datum_bis);
+                    
+                    dates.forEach(date => {
+                        if (date) {
+                            const key = `${date}_${poly.bearbeitet}`;
+                            if (!dailyData[key]) {
+                                dailyData[key] = {
+                                    date: date,
+                                    worker: poly.bearbeitet,
+                                    area: 0,
+                                    polygonCount: 0,
+                                    color: poly.farbe || 'default'
+                                };
+                            }
+                            dailyData[key].area += parseFloat(poly.flaeche_ha || 0);
+                            dailyData[key].polygonCount += 1;
+                        }
+                    });
+                }
+            });
+
+            const sortedData = Object.values(dailyData)
+                .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            // Erstelle D3 Chart für tägliche Leistung
+            renderDailyChart(sortedData);
+            
+            // Erstelle Liste
+            const listContainer = document.getElementById('daily-performance-list');
+            if (sortedData.length === 0) {
+                listContainer.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 20px;">Keine Leistungsdaten verfügbar</p>';
+                return;
+            }
+
+            const listHtml = sortedData.map(item => {
+                const color = colorMap[item.color] || '#667eea';
+                return `
+                    <div class="performance-item">
+                        <div class="performance-date">${item.date}</div>
+                        <div class="performance-worker" style="color: ${color}">
+                            ${item.worker} (${item.polygonCount} Polygone)
+                        </div>
+                        <div class="performance-area">${item.area.toFixed(2)} ha</div>
+                    </div>
+                `;
+            }).join('');
+
+            listContainer.innerHTML = listHtml;
+        }
+
+        function renderDailyChart(data) {
+            const container = document.getElementById('daily-performance-chart');
+            container.innerHTML = '';
+
+            if (data.length === 0) return;
+
+            const width = container.clientWidth || 800;
+            const height = 300;
+            const margin = { top: 20, right: 30, bottom: 60, left: 60 };
+
+            const svg = d3.select('#daily-performance-chart')
+                .append('svg')
+                .attr('width', '100%')
+                .attr('height', height)
+                .attr('viewBox', `0 0 ${width} ${height}`);
+
+            // Gruppiere Daten nach Datum für gestapeltes Balkendiagramm
+            const dateGroups = d3.group(data, d => d.date);
+            const chartData = Array.from(dateGroups, ([date, values]) => ({
+                date: date,
+                total: d3.sum(values, d => d.area),
+                workers: values
+            })).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            const x = d3.scaleBand()
+                .domain(chartData.map(d => d.date))
+                .range([margin.left, width - margin.right])
+                .padding(0.2);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(chartData, d => d.total)])
+                .nice()
+                .range([height - margin.bottom, margin.top]);
+
+            // X-Achse
+            svg.append('g')
+                .attr('transform', `translate(0,${height - margin.bottom})`)
+                .call(d3.axisBottom(x))
+                .selectAll('text')
+                .attr('transform', 'rotate(-45)')
+                .style('text-anchor', 'end')
+                .attr('font-size', '11px');
+
+            // Y-Achse
+            svg.append('g')
+                .attr('transform', `translate(${margin.left},0)`)
+                .call(d3.axisLeft(y))
+                .call(g => g.select('.domain').remove())
+                .call(g => g.selectAll('.tick line').clone()
+                    .attr('x2', width - margin.left - margin.right)
+                    .attr('stroke-opacity', 0.1));
+
+            // Balken
+            chartData.forEach(dayData => {
+                let yOffset = height - margin.bottom;
+                
+                dayData.workers.forEach(worker => {
+                    const barHeight = y(0) - y(worker.area);
+                    const color = colorMap[worker.color] || '#667eea';
+                    
+                    svg.append('rect')
+                        .attr('x', x(dayData.date))
+                        .attr('y', yOffset - barHeight)
+                        .attr('width', x.bandwidth())
+                        .attr('height', barHeight)
+                        .attr('fill', color)
+                        .attr('opacity', 0.8)
+                        .on('mouseover', function(event) {
+                            tooltip.transition()
+                                .duration(200)
+                                .style('opacity', 1);
+                            
+                            tooltip.html(`
+                                <strong>${dayData.date}</strong><br/>
+                                ${worker.worker}<br/>
+                                ${worker.area.toFixed(2)} ha (${worker.polygonCount} Polygone)
+                            `)
+                                .style('left', (event.pageX + 10) + 'px')
+                                .style('top', (event.pageY - 10) + 'px');
+                        })
+                        .on('mouseout', function() {
+                            tooltip.transition()
+                                .duration(200)
+                                .style('opacity', 0);
+                        });
+                    
+                    yOffset -= barHeight;
+                });
             });
         }
 
