@@ -56,6 +56,123 @@
             margin-bottom: 32px;
         }
 
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            h1,
+            .project-title {
+                font-size: 1.8rem;
+            }
+
+            .project-card {
+                padding: 20px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 12px;
+            }
+
+            .stat-value {
+                font-size: 2rem;
+            }
+
+            .chart-container,
+            .map-container {
+                padding: 20px;
+            }
+
+            #map {
+                height: 400px;
+            }
+
+            .sunburst-container {
+                min-height: 350px;
+            }
+
+            .back-button {
+                top: 10px;
+                left: 10px;
+                width: 40px;
+                height: 40px;
+                font-size: 1rem;
+            }
+
+            .tabs {
+                flex-wrap: wrap;
+                gap: 4px;
+            }
+
+            .tab {
+                padding: 8px 16px;
+                font-size: 0.8rem;
+            }
+
+            .timeline-item {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .timeline-date {
+                min-width: auto;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 8px;
+            }
+
+            .project-card {
+                padding: 16px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+
+            .chart-container,
+            .map-container {
+                padding: 16px;
+            }
+
+            #map {
+                height: 300px;
+            }
+
+            .sunburst-container {
+                min-height: 300px;
+            }
+        }
+
+        .map-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+        }
+
+        .map-control-btn {
+            background: rgba(26, 31, 58, 0.9);
+            border: 1px solid #252a47;
+            color: #e4e6eb;
+            padding: 8px 12px;
+            margin: 2px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.3s;
+        }
+
+        .map-control-btn:hover {
+            background: rgba(102, 126, 234, 0.8);
+            border-color: #667eea;
+        }
+
         .projects-grid {
             display: grid;
             gap: 24px;
@@ -425,7 +542,7 @@
 
 <body>
     <div class="container">
-        <header>
+        <header id="main-header">
             <h1>QField Dashboard</h1>
         </header>
 
@@ -574,6 +691,7 @@
         function showProjectsList() {
             document.getElementById('projects-view').style.display = 'block';
             document.getElementById('detail-view').classList.remove('active');
+            document.getElementById('main-header').style.display = 'block';
             currentProject = null;
         }
 
@@ -582,10 +700,16 @@
             const stats = project.statistics;
             const workers = Object.values(stats.workerStats || {});
 
+            // Header ausblenden und Projekttitel anzeigen
+            document.getElementById('main-header').style.display = 'none';
+
             container.innerHTML = `
                 <div class="project-title">${project.projectName}</div>
 
                 <div class="map-container">
+                    <div class="map-controls">
+                        <button class="map-control-btn" onclick="resetMapZoom()">🔍 Reset</button>
+                    </div>
                     <div id="map"></div>
                 </div>
 
@@ -595,7 +719,7 @@
                 </div>
 
                 <div class="chart-container">
-                    <div class="chart-title">Chronologische Auflistung</div>
+                    <div class="chart-title">Tagesleistung</div>
                     <div class="tabs" id="timeline-tabs"></div>
                     <div id="timeline-content"></div>
                 </div>
@@ -606,7 +730,27 @@
             renderTimelineTabs(project.data, workers);
         }
 
-        // Schlichte Karte ohne Titel
+        // Map Reset Funktion
+        let mapSvg = null;
+        let originalScales = null;
+
+        function resetMapZoom() {
+            if (mapSvg && originalScales) {
+                mapSvg.selectAll('path')
+                    .transition()
+                    .duration(750)
+                    .attr('d', function () {
+                        const polyData = d3.select(this).datum();
+                        if (polyData && polyData.coordinates) {
+                            const originalCoords = polyData.coordinates.map(([px, py]) => [originalScales.x(px), originalScales.y(py)]);
+                            return `M${originalCoords.map(d => d.join(',')).join('L')}Z`;
+                        }
+                        return d3.select(this).attr('d');
+                    });
+            }
+        }
+
+        // Schlichte Karte ohne Titel - nur Größe und Name im Tooltip
         function renderMap(polygons) {
             const container = document.getElementById('map');
             container.innerHTML = '';
@@ -659,8 +803,11 @@
                 .domain(d3.extent(allCoordinates, d => d[1]))
                 .range([height - margin, margin]);
 
+            // Speichere Original-Scales für Reset
+            originalScales = { x: x.copy(), y: y.copy() };
+
             // SVG
-            const svg = d3.create("svg")
+            mapSvg = d3.create("svg")
                 .attr("width", width)
                 .attr("height", height)
                 .attr("viewBox", [0, 0, width, height])
@@ -681,7 +828,7 @@
                     opacity = 0.8;
                 }
 
-                svg.append('path')
+                mapSvg.append('path')
                     .attr('d', pathData)
                     .attr('fill', color)
                     .attr('stroke', color)
@@ -693,10 +840,8 @@
 
                         tooltip.transition().duration(200).style('opacity', 1);
                         tooltip.html(`
-                            <strong>Bereich ${poly.id}</strong><br/>
-                            ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha<br/>
-                            ${poly.bearbeitet || 'Nicht bearbeitet'}<br/>
-                            <em>Klicken zum Zoomen</em>
+                            <strong>${poly.bearbeitet || 'Bereich ' + poly.id}</strong><br/>
+                            ${parseFloat(poly.flaeche_ha || 0).toFixed(2)} ha
                         `)
                             .style('left', (event.pageX + 10) + 'px')
                             .style('top', (event.pageY - 10) + 'px');
@@ -724,7 +869,7 @@
                             .range([height - margin, margin]);
 
                         // Animiere alle Polygone zur neuen Position
-                        svg.selectAll('path')
+                        mapSvg.selectAll('path')
                             .transition()
                             .duration(750)
                             .attr('d', function () {
@@ -737,8 +882,8 @@
                             });
 
                         // Doppelklick zum Zurückzoomen
-                        svg.on('dblclick', function () {
-                            svg.selectAll('path')
+                        mapSvg.on('dblclick', function () {
+                            mapSvg.selectAll('path')
                                 .transition()
                                 .duration(750)
                                 .attr('d', function () {
@@ -756,15 +901,15 @@
                     .datum(poly); // Speichere Polygon-Daten für Zoom
             });
 
-            container.append(svg.node());
+            container.append(mapSvg.node());
         }
 
-        // Sunburst: Innerer Ring = Soll%, Äußerer Ring = Ist-Daten
+        // Neue Sunburst: Innerer Kreis = benötigte ha, Äußerer Ring = Fortschritt zum Soll
         function renderProjectSunburst(projectInfo, workers, stats) {
             const container = document.getElementById('sunburst-chart');
             container.innerHTML = '';
 
-            if (!projectInfo || !projectInfo.workerPercentages) {
+            if (!projectInfo || !projectInfo.workerPercentages || !stats) {
                 container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Projektanteile verfügbar</p>';
                 return;
             }
@@ -773,9 +918,7 @@
             const height = 500;
             const radius = Math.min(width, height) / 2;
 
-            // Erstelle zwei separate Ringe
-            const innerRadius = 60;
-            const middleRadius = 120;
+            const innerRadius = 80;
             const outerRadius = 180;
 
             const svg = d3.create("svg")
@@ -783,91 +926,131 @@
                 .attr("height", height)
                 .attr("viewBox", [-width / 2, -height / 2, width, height]);
 
-            // INNERER RING: Soll-Anteile aus Settings
-            const sollData = Object.entries(projectInfo.workerPercentages).map(([color, percentage]) => ({
-                name: projectInfo.colorWorkers[color] || color,
-                color: color,
-                value: percentage,
-                type: 'soll'
-            }));
+            // Berechne Soll-Flächen basierend auf Gesamtfläche und Prozentsätzen
+            const totalArea = stats.totalArea || 0;
+            const completedArea = stats.completedArea || 0;
 
-            const sollPie = d3.pie()
-                .value(d => d.value)
-                .sort(null);
+            // Erstelle Daten für äußeren Ring - nur bearbeitete Bereiche im Verhältnis zum Soll
+            const ringData = Object.entries(projectInfo.workerPercentages).map(([color, sollProzent]) => {
+                const sollFlaeche = (totalArea * sollProzent) / 100;
+                const worker = workers.find(w => w.color === color);
+                const istFlaeche = worker ? worker.area : 0;
+                const fortschritt = sollFlaeche > 0 ? (istFlaeche / sollFlaeche) * 100 : 0;
 
-            const sollArc = d3.arc()
+                return {
+                    name: projectInfo.colorWorkers[color] || color,
+                    color: color,
+                    sollFlaeche: sollFlaeche,
+                    istFlaeche: istFlaeche,
+                    fortschritt: Math.min(fortschritt, 100), // Max 100%
+                    sollProzent: sollProzent
+                };
+            });
+
+            // Äußerer Ring - zeigt nur den bearbeiteten Anteil vom Soll
+            const pie = d3.pie()
+                .value(d => d.sollProzent) // Verwende Soll-Prozent für Segmentgröße
+                .sort(null)
+                .startAngle(0)
+                .endAngle(2 * Math.PI);
+
+            const arc = d3.arc()
                 .innerRadius(innerRadius)
-                .outerRadius(middleRadius);
+                .outerRadius(outerRadius);
 
-            svg.selectAll('.soll-arc')
-                .data(sollPie(sollData))
-                .join('path')
-                .attr('class', 'soll-arc')
-                .attr('d', sollArc)
-                .attr('fill', d => colorMap[d.data.color] || '#667eea')
-                .attr('opacity', 0.8)
-                .attr('stroke', '#0a0e27')
-                .attr('stroke-width', 2)
-                .style('cursor', 'pointer')
-                .on('mouseover', function(event, d) {
-                    d3.select(this).attr('opacity', 1);
-                    tooltip.transition().duration(200).style('opacity', 1);
-                    tooltip.html(`
-                        <strong>${d.data.name}</strong><br/>
-                        Soll-Anteil: ${d.data.value.toFixed(1)}%
-                    `)
-                    .style('left', (event.pageX + 10) + 'px')
-                    .style('top', (event.pageY - 10) + 'px');
-                })
-                .on('mouseout', function() {
-                    d3.select(this).attr('opacity', 0.8);
-                    tooltip.transition().duration(200).style('opacity', 0);
-                });
+            // Erstelle Segmente für jeden Bearbeiter
+            ringData.forEach((d, i) => {
+                const startAngle = (d.sollProzent / 100) * 2 * Math.PI * (i === 0 ? 0 : ringData.slice(0, i).reduce((sum, item) => sum + item.sollProzent, 0) / 100);
+                const endAngle = startAngle + (d.sollProzent / 100) * 2 * Math.PI;
 
-            // ÄUSSERER RING: Ist-Daten (tatsächlich bearbeitete Flächen)
-            const istData = workers.map(worker => ({
-                name: worker.name,
-                color: worker.color,
-                value: worker.area,
-                type: 'ist'
-            })).filter(d => d.value > 0); // Nur Bearbeiter mit tatsächlichen Daten
+                // Vollkreis für Soll-Bereich (grau)
+                const sollArc = d3.arc()
+                    .innerRadius(innerRadius)
+                    .outerRadius(outerRadius)
+                    .startAngle(startAngle)
+                    .endAngle(endAngle);
 
-            if (istData.length > 0) {
-                const istPie = d3.pie()
-                    .value(d => d.value)
-                    .sort(null);
-
-                const istArc = d3.arc()
-                    .innerRadius(middleRadius + 5)
-                    .outerRadius(outerRadius);
-
-                svg.selectAll('.ist-arc')
-                    .data(istPie(istData))
-                    .join('path')
-                    .attr('class', 'ist-arc')
-                    .attr('d', istArc)
-                    .attr('fill', d => colorMap[d.data.color] || '#667eea')
-                    .attr('opacity', 0.6)
+                svg.append('path')
+                    .attr('d', sollArc)
+                    .attr('fill', '#1e2139')
                     .attr('stroke', '#0a0e27')
-                    .attr('stroke-width', 2)
-                    .style('cursor', 'pointer')
-                    .on('mouseover', function(event, d) {
-                        d3.select(this).attr('opacity', 1);
-                        tooltip.transition().duration(200).style('opacity', 1);
-                        const percentage = (d.data.value / d3.sum(istData, dd => dd.value) * 100).toFixed(1);
-                        tooltip.html(`
-                            <strong>${d.data.name}</strong><br/>
-                            Ist-Fläche: ${d.data.value.toFixed(2)} ha<br/>
-                            Anteil: ${percentage}%
-                        `)
-                        .style('left', (event.pageX + 10) + 'px')
-                        .style('top', (event.pageY - 10) + 'px');
-                    })
-                    .on('mouseout', function() {
-                        d3.select(this).attr('opacity', 0.6);
-                        tooltip.transition().duration(200).style('opacity', 0);
-                    });
-            }
+                    .attr('stroke-width', 2);
+
+                // Fortschritts-Segment (farbig, nur so groß wie der Fortschritt)
+                if (d.fortschritt > 0) {
+                    const fortschrittAngle = startAngle + ((endAngle - startAngle) * (d.fortschritt / 100));
+
+                    const fortschrittArc = d3.arc()
+                        .innerRadius(innerRadius)
+                        .outerRadius(outerRadius)
+                        .startAngle(startAngle)
+                        .endAngle(fortschrittAngle);
+
+                    svg.append('path')
+                        .attr('d', fortschrittArc)
+                        .attr('fill', colorMap[d.color] || '#667eea')
+                        .attr('stroke', '#0a0e27')
+                        .attr('stroke-width', 2)
+                        .style('cursor', 'pointer')
+                        .on('mouseover', function (event) {
+                            d3.select(this).attr('opacity', 1.2);
+                            tooltip.transition().duration(200).style('opacity', 1);
+                            tooltip.html(`
+                                <strong>${d.name}</strong><br/>
+                                Soll: ${d.sollFlaeche.toFixed(1)} ha<br/>
+                                Ist: ${d.istFlaeche.toFixed(1)} ha<br/>
+                                Fortschritt: ${d.fortschritt.toFixed(1)}%
+                            `)
+                                .style('left', (event.pageX + 10) + 'px')
+                                .style('top', (event.pageY - 10) + 'px');
+                        })
+                        .on('mouseout', function () {
+                            d3.select(this).attr('opacity', 1);
+                            tooltip.transition().duration(200).style('opacity', 0);
+                        });
+                }
+
+                // Prozent-Text im äußeren Ring
+                const textAngle = (startAngle + endAngle) / 2;
+                const textRadius = (innerRadius + outerRadius) / 2;
+                const textX = Math.cos(textAngle - Math.PI / 2) * textRadius;
+                const textY = Math.sin(textAngle - Math.PI / 2) * textRadius;
+
+                svg.append('text')
+                    .attr('x', textX)
+                    .attr('y', textY)
+                    .attr('text-anchor', 'middle')
+                    .attr('dominant-baseline', 'middle')
+                    .attr('fill', '#e4e6eb')
+                    .attr('font-size', '12px')
+                    .attr('font-weight', 'bold')
+                    .text(`${d.fortschritt.toFixed(0)}%`);
+            });
+
+            // Innerer Kreis - Gesamtstatistik
+            svg.append('circle')
+                .attr('r', innerRadius - 5)
+                .attr('fill', '#1a1f3a')
+                .attr('stroke', '#252a47')
+                .attr('stroke-width', 2);
+
+            // Text im inneren Kreis
+            svg.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'middle')
+                .attr('y', -10)
+                .attr('fill', '#e4e6eb')
+                .attr('font-size', '18px')
+                .attr('font-weight', 'bold')
+                .text(`${completedArea.toFixed(1)} ha`);
+
+            svg.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'middle')
+                .attr('y', 10)
+                .attr('fill', '#8b92b8')
+                .attr('font-size', '12px')
+                .text(`von ${totalArea.toFixed(1)} ha`);
 
             container.append(svg.node());
         }
@@ -896,7 +1079,7 @@
 
                     // Verwende datum falls vorhanden, sonst datum_von oder datum_bis
                     const date = poly.datum || poly.datum_von || poly.datum_bis;
-                    
+
                     if (date) {
                         const key = `${date}_${poly.bearbeitet}`;
                         if (!dailyData[key]) {
