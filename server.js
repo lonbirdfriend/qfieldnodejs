@@ -188,8 +188,7 @@ async function calculateProjectStatistics(projectId) {
         COALESCE(SUM(flaeche_ha), 0) as area,
         array_agg(
           json_build_object(
-            'datum_von', datum_von,
-            'datum_bis', datum_bis,
+            'datum', datum,
             'area', flaeche_ha,
             'id', polygon_id
           ) ORDER BY updated_at DESC
@@ -197,7 +196,7 @@ async function calculateProjectStatistics(projectId) {
       FROM polygons 
       WHERE project_id = $1 
         AND bearbeitet != '' 
-        AND (datum_von != '' OR datum_bis != '')
+        AND datum != ''
         AND farbe != ''
       GROUP BY farbe, bearbeitet
     `, [projectId]);
@@ -213,7 +212,7 @@ async function calculateProjectStatistics(projectId) {
         area: parseFloat(worker.area),
         polygonCount: parseInt(worker.polygon_count),
         percentage: percentage,
-        chronology: worker.chronology.filter(entry => (entry.datum_von || entry.datum_bis) && entry.area)
+        chronology: worker.chronology.filter(entry => entry.datum && entry.area)
       };
     });
 
@@ -642,6 +641,50 @@ app.get('/api/layers', async (req, res) => {
   } catch (error) {
     console.error('Fehler beim Laden der Layer:', error);
     res.status(500).json({ error: 'Serverfehler' });
+  }
+});
+
+// Delete All Projects Endpoint
+app.delete('/api/projects/delete-all', async (req, res) => {
+  console.log('DELETE /api/projects/delete-all - Lösche alle Projekte');
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Lösche alle Polygone
+    const polygonsResult = await client.query('DELETE FROM polygons');
+    const deletedPolygons = polygonsResult.rowCount;
+
+    // Lösche alle Projekte
+    const projectsResult = await client.query('DELETE FROM projects');
+    const deletedProjects = projectsResult.rowCount;
+
+    // Setze Server Status zurück
+    await client.query(`
+      UPDATE server_status 
+      SET status = false, last_update = CURRENT_TIMESTAMP, source = 'delete_all' 
+      WHERE id = 1
+    `);
+
+    await client.query('COMMIT');
+
+    console.log(`Alle Daten gelöscht - Projekte: ${deletedProjects}, Polygone: ${deletedPolygons}`);
+
+    res.json({
+      success: true,
+      message: `${deletedProjects} Projekte und ${deletedPolygons} Polygone gelöscht`,
+      deletedProjects: deletedProjects,
+      deletedPolygons: deletedPolygons
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Fehler beim Löschen aller Projekte:', error);
+    res.status(500).json({ error: 'Fehler beim Löschen: ' + error.message });
+  } finally {
+    client.release();
   }
 });
 
