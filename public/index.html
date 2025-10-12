@@ -1132,13 +1132,14 @@
                     console.log('Processing polygon:', {
                         id: poly.id,
                         bearbeitet: poly.bearbeitet,
-                        datum: poly.datum,
+                        datum_von: poly.datum_von,
+                        datum_bis: poly.datum_bis,
                         farbe: poly.farbe,
                         flaeche_ha: poly.flaeche_ha
                     });
 
-                    // Verwende datum falls vorhanden, sonst datum_von oder datum_bis
-                    const date = poly.datum || poly.datum_von || poly.datum_bis;
+                    // Verwende datum_von oder datum_bis für die Timeline
+                    const date = poly.datum_von || poly.datum_bis;
 
                     if (date) {
                         const key = `${date}_${poly.bearbeitet}`;
@@ -1257,7 +1258,7 @@
             if (!confirm('⚠️ WARNUNG: Alle Projekte und Daten werden unwiderruflich gelöscht!\n\nSind Sie sicher?')) {
                 return;
             }
-            
+
             if (!confirm('🚨 LETZTE WARNUNG: Diese Aktion kann nicht rückgängig gemacht werden!\n\nWirklich alle Projekte löschen?')) {
                 return;
             }
