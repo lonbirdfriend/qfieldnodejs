@@ -934,62 +934,71 @@
             container.append(mapSvg.node());
         }
 
-        // Neue Sunburst: Innerer Ring = Mitarbeiter, Äußerer Ring = Tagesleistungen
+        // Neue Sunburst: Innerer Ring = Mitarbeiter, Äußerer Ring = Tagesleistungen mit Soll-Verhältnis
         function renderProjectSunburst(projectInfo, workers, stats) {
             const container = document.getElementById('sunburst-chart');
             container.innerHTML = '';
 
-            if (!workers || workers.length === 0) {
+            if (!workers || workers.length === 0 || !projectInfo || !projectInfo.workerPercentages) {
                 container.innerHTML = '<p style="color: #8b92b8; text-align: center; padding: 40px;">Keine Mitarbeiterdaten verfügbar</p>';
                 return;
             }
 
-            const width = 600;
-            const height = 600;
-            const radius = Math.min(width, height) / 2 - 20;
+            const width = 650;
+            const height = 650;
+            const radius = Math.min(width, height) / 2 - 30;
 
             const innerRadius = 80;
             const middleRadius = 160;
             const outerRadius = 240;
+            const progressRadius = 260;
 
             const svg = d3.create("svg")
                 .attr("width", width)
                 .attr("height", height)
                 .attr("viewBox", [-width / 2, -height / 2, width, height]);
 
-            // Berechne Gesamtfortschritt
+            // Berechne Soll-Daten und Fortschritt
             const totalArea = stats.totalArea || 0;
             const completedArea = stats.completedArea || 0;
             const overallProgress = totalArea > 0 ? (completedArea / totalArea) * 100 : 0;
 
-            // Erstelle Daten für inneren Ring (Mitarbeiter)
-            const totalWorkerArea = workers.reduce((sum, w) => sum + w.area, 0);
-            
-            const workerData = workers.map(worker => ({
-                ...worker,
-                percentage: totalWorkerArea > 0 ? (worker.area / totalWorkerArea) * 100 : 0,
-                dailyWork: worker.chronology || []
-            }));
+            // Erstelle Daten basierend auf Soll-Prozentsätzen
+            const workerData = Object.entries(projectInfo.workerPercentages).map(([color, sollProzent]) => {
+                const sollFlaeche = (totalArea * sollProzent) / 100;
+                const worker = workers.find(w => w.color === color);
+                const istFlaeche = worker ? worker.area : 0;
+                const fortschritt = sollFlaeche > 0 ? (istFlaeche / sollFlaeche) * 100 : 0;
+                const name = projectInfo.colorWorkers[color] || `Mitarbeiter ${color}`;
 
-            // Pie-Generator für Mitarbeiter
-            const workerPie = d3.pie()
-                .value(d => d.percentage)
-                .sort(null)
-                .startAngle(0)
-                .endAngle(2 * Math.PI);
+                return {
+                    name: name,
+                    color: color,
+                    sollProzent: sollProzent,
+                    sollFlaeche: sollFlaeche,
+                    istFlaeche: istFlaeche,
+                    fortschritt: Math.min(fortschritt, 100),
+                    dailyWork: worker ? (worker.chronology || []) : []
+                };
+            });
 
-            const workerArcs = workerPie(workerData);
+            // Sortiere nach Soll-Prozent für konsistente Darstellung
+            workerData.sort((a, b) => b.sollProzent - a.sollProzent);
+
+            let currentAngle = 0;
 
             // Zeichne Mitarbeiter-Segmente (innerer Ring)
-            workerArcs.forEach((arc, i) => {
-                const worker = arc.data;
-                
-                // Mitarbeiter-Segment
+            workerData.forEach((worker, i) => {
+                const segmentAngle = (worker.sollProzent / 100) * 2 * Math.PI;
+                const startAngle = currentAngle;
+                const endAngle = currentAngle + segmentAngle;
+
+                // Mitarbeiter-Segment (innerer Ring)
                 const workerArc = d3.arc()
                     .innerRadius(innerRadius)
                     .outerRadius(middleRadius)
-                    .startAngle(arc.startAngle)
-                    .endAngle(arc.endAngle);
+                    .startAngle(startAngle)
+                    .endAngle(endAngle);
 
                 svg.append('path')
                     .attr('d', workerArc)
@@ -1002,8 +1011,9 @@
                         tooltip.transition().duration(200).style('opacity', 1);
                         tooltip.html(`
                             <strong>${worker.name}</strong><br/>
-                            ${worker.area.toFixed(1)} ha (${worker.percentage.toFixed(1)}%)<br/>
-                            ${worker.polygonCount} Bereiche
+                            Soll: ${worker.sollFlaeche.toFixed(1)} ha (${worker.sollProzent}%)<br/>
+                            Ist: ${worker.istFlaeche.toFixed(1)} ha<br/>
+                            Fortschritt: ${worker.fortschritt.toFixed(1)}%
                         `)
                             .style('left', (event.pageX + 10) + 'px')
                             .style('top', (event.pageY - 10) + 'px');
@@ -1013,52 +1023,17 @@
                         tooltip.transition().duration(200).style('opacity', 0);
                     });
 
-                // Text für Mitarbeiter (Name, Prozent, Hektar)
-                const textAngle = (arc.startAngle + arc.endAngle) / 2;
-                const textRadius = (innerRadius + middleRadius) / 2;
-                const textX = Math.cos(textAngle - Math.PI / 2) * textRadius;
-                const textY = Math.sin(textAngle - Math.PI / 2) * textRadius;
-
-                // Name
-                svg.append('text')
-                    .attr('x', textX)
-                    .attr('y', textY - 15)
-                    .attr('text-anchor', 'middle')
-                    .attr('dominant-baseline', 'middle')
-                    .attr('fill', '#ffffff')
-                    .attr('font-size', '12px')
-                    .attr('font-weight', 'bold')
-                    .text(worker.name);
-
-                // Prozent
-                svg.append('text')
-                    .attr('x', textX)
-                    .attr('y', textY)
-                    .attr('text-anchor', 'middle')
-                    .attr('dominant-baseline', 'middle')
-                    .attr('fill', '#ffffff')
-                    .attr('font-size', '11px')
-                    .text(`${worker.percentage.toFixed(1)}%`);
-
-                // Hektar
-                svg.append('text')
-                    .attr('x', textX)
-                    .attr('y', textY + 15)
-                    .attr('text-anchor', 'middle')
-                    .attr('dominant-baseline', 'middle')
-                    .attr('fill', '#ffffff')
-                    .attr('font-size', '10px')
-                    .text(`${worker.area.toFixed(1)} ha`);
-
-                // Zeichne Tagesleistungen für diesen Mitarbeiter (äußerer Ring)
+                // Äußerer Ring: Tagesleistungen im Verhältnis zum Soll (mit Lücken)
                 const dailyWork = worker.dailyWork.filter(d => d.datum_von || d.datum_bis);
                 if (dailyWork.length > 0) {
-                    const anglePerDay = (arc.endAngle - arc.startAngle) / dailyWork.length;
-                    
+                    // Berechne wie viel des Segments tatsächlich gefüllt werden soll (basierend auf Fortschritt)
+                    const filledAngle = segmentAngle * (worker.fortschritt / 100);
+                    const anglePerDay = filledAngle / dailyWork.length;
+
                     dailyWork.forEach((day, dayIndex) => {
-                        const dayStartAngle = arc.startAngle + (dayIndex * anglePerDay);
+                        const dayStartAngle = startAngle + (dayIndex * anglePerDay);
                         const dayEndAngle = dayStartAngle + anglePerDay;
-                        
+
                         const dayArc = d3.arc()
                             .innerRadius(middleRadius + 5)
                             .outerRadius(outerRadius)
@@ -1069,7 +1044,7 @@
                         const maxDayArea = Math.max(...dailyWork.map(d => d.area || 0));
                         const intensity = maxDayArea > 0 ? (day.area || 0) / maxDayArea : 0;
                         const dayColor = d3.color(colorMap[worker.color] || '#667eea');
-                        dayColor.opacity = 0.3 + (intensity * 0.7);
+                        dayColor.opacity = 0.4 + (intensity * 0.6);
 
                         svg.append('path')
                             .attr('d', dayArc)
@@ -1093,93 +1068,102 @@
                                 d3.select(this).style('filter', 'none');
                                 tooltip.transition().duration(200).style('opacity', 0);
                             });
-
-                        // Datum-Text für größere Segmente
-                        if (anglePerDay > 0.3) {
-                            const dayTextAngle = (dayStartAngle + dayEndAngle) / 2;
-                            const dayTextRadius = (middleRadius + outerRadius) / 2 + 10;
-                            const dayTextX = Math.cos(dayTextAngle - Math.PI / 2) * dayTextRadius;
-                            const dayTextY = Math.sin(dayTextAngle - Math.PI / 2) * dayTextRadius;
-
-                            const datum = day.datum_von || day.datum_bis || '';
-                            if (datum) {
-                                svg.append('text')
-                                    .attr('x', dayTextX)
-                                    .attr('y', dayTextY)
-                                    .attr('text-anchor', 'middle')
-                                    .attr('dominant-baseline', 'middle')
-                                    .attr('fill', '#e4e6eb')
-                                    .attr('font-size', '8px')
-                                    .text(datum.substring(0, 5)); // Kurzes Datum
-                            }
-                        }
                     });
+
+                    // Zeige nicht erfüllten Bereich als grauen Bereich
+                    if (worker.fortschritt < 100) {
+                        const unfilledStartAngle = startAngle + filledAngle;
+                        const unfilledEndAngle = endAngle;
+
+                        if (unfilledEndAngle > unfilledStartAngle) {
+                            const unfilledArc = d3.arc()
+                                .innerRadius(middleRadius + 5)
+                                .outerRadius(outerRadius)
+                                .startAngle(unfilledStartAngle)
+                                .endAngle(unfilledEndAngle);
+
+                            svg.append('path')
+                                .attr('d', unfilledArc)
+                                .attr('fill', '#1e2139')
+                                .attr('stroke', '#0a0e27')
+                                .attr('stroke-width', 1)
+                                .attr('opacity', 0.5);
+                        }
+                    }
                 }
+
+                currentAngle = endAngle;
             });
 
-            // Innerer Kreis - Gesamtstatistik mit Fortschritt
-            svg.append('circle')
-                .attr('r', innerRadius - 5)
-                .attr('fill', '#1a1f3a')
-                .attr('stroke', '#252a47')
-                .attr('stroke-width', 2);
-
-            // Fortschrittsring im inneren Kreis
+            // Äußerster Ring: Gesamtfortschritt vom Soll
             const progressArc = d3.arc()
-                .innerRadius(innerRadius - 15)
-                .outerRadius(innerRadius - 10)
+                .innerRadius(progressRadius)
+                .outerRadius(progressRadius + 15)
                 .startAngle(0)
                 .endAngle((overallProgress / 100) * 2 * Math.PI);
 
-            svg.append('path')
-                .attr('d', progressArc)
-                .attr('fill', '#10b981')
-                .attr('stroke', 'none');
-
             // Hintergrund für Fortschrittsring
             const progressBgArc = d3.arc()
-                .innerRadius(innerRadius - 15)
-                .outerRadius(innerRadius - 10)
+                .innerRadius(progressRadius)
+                .outerRadius(progressRadius + 15)
                 .startAngle(0)
                 .endAngle(2 * Math.PI);
 
             svg.append('path')
                 .attr('d', progressBgArc)
                 .attr('fill', '#1e2139')
-                .attr('stroke', 'none');
+                .attr('stroke', '#0a0e27')
+                .attr('stroke-width', 2);
 
-            // Fortschrittsring darüber
             svg.append('path')
                 .attr('d', progressArc)
                 .attr('fill', '#10b981')
-                .attr('stroke', 'none');
+                .attr('stroke', '#0a0e27')
+                .attr('stroke-width', 2);
+
+            // Fortschritts-Text am äußeren Ring
+            svg.append('text')
+                .attr('x', 0)
+                .attr('y', -progressRadius - 25)
+                .attr('text-anchor', 'middle')
+                .attr('fill', '#10b981')
+                .attr('font-size', '14px')
+                .attr('font-weight', 'bold')
+                .text(`${overallProgress.toFixed(1)}% vom Soll erreicht`);
+
+            // Innerer Kreis - Soll-Informationen
+            svg.append('circle')
+                .attr('r', innerRadius - 5)
+                .attr('fill', '#1a1f3a')
+                .attr('stroke', '#252a47')
+                .attr('stroke-width', 2);
 
             // Text im inneren Kreis
             svg.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'middle')
-                .attr('y', -20)
+                .attr('y', -15)
                 .attr('fill', '#e4e6eb')
                 .attr('font-size', '16px')
                 .attr('font-weight', 'bold')
-                .text(`${overallProgress.toFixed(1)}%`);
+                .text('SOLL');
 
             svg.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'middle')
-                .attr('y', 0)
-                .attr('fill', '#10b981')
-                .attr('font-size', '14px')
+                .attr('y', 5)
+                .attr('fill', '#667eea')
+                .attr('font-size', '18px')
                 .attr('font-weight', 'bold')
-                .text(`${completedArea.toFixed(1)} ha`);
+                .text(`${totalArea.toFixed(0)} ha`);
 
             svg.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'middle')
                 .attr('y', 20)
-                .attr('fill', '#8b92b8')
-                .attr('font-size', '12px')
-                .text(`von ${totalArea.toFixed(1)} ha`);
+                .attr('fill', '#10b981')
+                .attr('font-size', '14px')
+                .text(`${completedArea.toFixed(1)} ha erreicht`);
 
             container.appendChild(svg.node());
         }
