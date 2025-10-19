@@ -1026,17 +1026,30 @@
                 // Äußerer Ring: Akkumulierte Tagesleistungen im Verhältnis zum Soll (mit Lücken)
                 const dailyWork = worker.dailyWork.filter(d => d.datum_von || d.datum_bis);
                 if (dailyWork.length > 0) {
-                    // Sortiere nach Datum für korrekte Akkumulation
-                    dailyWork.sort((a, b) => {
-                        const dateA = a.datum_von || a.datum_bis || '';
-                        const dateB = b.datum_von || b.datum_bis || '';
-                        return dateA.localeCompare(dateB);
+                    // Gruppiere nach Datum und summiere die Flächen
+                    const dailyGroups = {};
+                    dailyWork.forEach(day => {
+                        const date = day.datum_von || day.datum_bis;
+                        if (!dailyGroups[date]) {
+                            dailyGroups[date] = {
+                                date: date,
+                                area: 0,
+                                count: 0
+                            };
+                        }
+                        dailyGroups[date].area += day.area || 0;
+                        dailyGroups[date].count += 1;
+                    });
+
+                    // Konvertiere zu Array und sortiere nach Datum
+                    const groupedDays = Object.values(dailyGroups).sort((a, b) => {
+                        return a.date.localeCompare(b.date);
                     });
 
                     // Berechne akkumulierte Werte
                     let cumulativeArea = 0;
-                    const cumulativeDays = dailyWork.map(day => {
-                        cumulativeArea += day.area || 0;
+                    const cumulativeDays = groupedDays.map(day => {
+                        cumulativeArea += day.area;
                         return {
                             ...day,
                             cumulativeArea: cumulativeArea,
@@ -1059,8 +1072,8 @@
                                 .startAngle(dayStartAngle)
                                 .endAngle(dayEndAngle);
 
-                            // Farbintensität basierend auf Tagesleistung (nicht akkumuliert)
-                            const maxDayArea = Math.max(...dailyWork.map(d => d.area || 0));
+                            // Farbintensität basierend auf gruppierter Tagesleistung
+                            const maxDayArea = Math.max(...groupedDays.map(d => d.area || 0));
                             const intensity = maxDayArea > 0 ? (day.area || 0) / maxDayArea : 0;
                             const dayColor = d3.color(colorMap[worker.color] || '#667eea');
                             dayColor.opacity = 0.4 + (intensity * 0.6);
@@ -1073,12 +1086,11 @@
                                 .style('cursor', 'pointer')
                                 .on('mouseover', function (event) {
                                     d3.select(this).style('filter', 'brightness(1.4)');
-                                    const datum = day.datum_von || day.datum_bis || 'Unbekannt';
                                     tooltip.transition().duration(200).style('opacity', 1);
                                     tooltip.html(`
                                         <strong>${worker.name}</strong><br/>
-                                        Datum: ${datum}<br/>
-                                        Tagesleistung: ${(day.area || 0).toFixed(2)} ha<br/>
+                                        Datum: ${day.date}<br/>
+                                        Tagesleistung: ${day.area.toFixed(2)} ha (${day.count} Bereiche)<br/>
                                         Kumulativ: ${day.cumulativeArea.toFixed(2)} ha<br/>
                                         Fortschritt: ${day.cumulativeProgress.toFixed(1)}%
                                     `)
