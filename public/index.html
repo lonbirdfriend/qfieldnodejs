@@ -1091,8 +1091,7 @@
                                         <strong>${worker.name}</strong><br/>
                                         Datum: ${day.date}<br/>
                                         Tagesleistung: ${day.area.toFixed(2)} ha (${day.count} Bereiche)<br/>
-                                        Kumulativ: ${day.cumulativeArea.toFixed(2)} ha<br/>
-                                        Fortschritt: ${day.cumulativeProgress.toFixed(1)}%
+                                        % vom Soll: ${day.cumulativeProgress.toFixed(1)}%
                                     `)
                                         .style('left', (event.pageX + 10) + 'px')
                                         .style('top', (event.pageY - 10) + 'px');
