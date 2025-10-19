@@ -1023,51 +1023,73 @@
                         tooltip.transition().duration(200).style('opacity', 0);
                     });
 
-                // Äußerer Ring: Tagesleistungen im Verhältnis zum Soll (mit Lücken)
+                // Äußerer Ring: Akkumulierte Tagesleistungen im Verhältnis zum Soll (mit Lücken)
                 const dailyWork = worker.dailyWork.filter(d => d.datum_von || d.datum_bis);
                 if (dailyWork.length > 0) {
-                    // Berechne wie viel des Segments tatsächlich gefüllt werden soll (basierend auf Fortschritt)
-                    const filledAngle = segmentAngle * (worker.fortschritt / 100);
-                    const anglePerDay = filledAngle / dailyWork.length;
+                    // Sortiere nach Datum für korrekte Akkumulation
+                    dailyWork.sort((a, b) => {
+                        const dateA = a.datum_von || a.datum_bis || '';
+                        const dateB = b.datum_von || b.datum_bis || '';
+                        return dateA.localeCompare(dateB);
+                    });
 
-                    dailyWork.forEach((day, dayIndex) => {
-                        const dayStartAngle = startAngle + (dayIndex * anglePerDay);
-                        const dayEndAngle = dayStartAngle + anglePerDay;
+                    // Berechne akkumulierte Werte
+                    let cumulativeArea = 0;
+                    const cumulativeDays = dailyWork.map(day => {
+                        cumulativeArea += day.area || 0;
+                        return {
+                            ...day,
+                            cumulativeArea: cumulativeArea,
+                            cumulativeProgress: worker.sollFlaeche > 0 ? (cumulativeArea / worker.sollFlaeche) * 100 : 0
+                        };
+                    });
 
-                        const dayArc = d3.arc()
-                            .innerRadius(middleRadius + 5)
-                            .outerRadius(outerRadius)
-                            .startAngle(dayStartAngle)
-                            .endAngle(dayEndAngle);
+                    // Berechne Winkel basierend auf akkumuliertem Fortschritt
+                    cumulativeDays.forEach((day, dayIndex) => {
+                        const prevProgress = dayIndex > 0 ? cumulativeDays[dayIndex - 1].cumulativeProgress : 0;
+                        const currentProgress = Math.min(day.cumulativeProgress, 100);
 
-                        // Farbintensität basierend auf Tagesleistung
-                        const maxDayArea = Math.max(...dailyWork.map(d => d.area || 0));
-                        const intensity = maxDayArea > 0 ? (day.area || 0) / maxDayArea : 0;
-                        const dayColor = d3.color(colorMap[worker.color] || '#667eea');
-                        dayColor.opacity = 0.4 + (intensity * 0.6);
+                        const dayStartAngle = startAngle + (segmentAngle * (prevProgress / 100));
+                        const dayEndAngle = startAngle + (segmentAngle * (currentProgress / 100));
 
-                        svg.append('path')
-                            .attr('d', dayArc)
-                            .attr('fill', dayColor.toString())
-                            .attr('stroke', '#0a0e27')
-                            .attr('stroke-width', 1)
-                            .style('cursor', 'pointer')
-                            .on('mouseover', function (event) {
-                                d3.select(this).style('filter', 'brightness(1.4)');
-                                const datum = day.datum_von || day.datum_bis || 'Unbekannt';
-                                tooltip.transition().duration(200).style('opacity', 1);
-                                tooltip.html(`
-                                    <strong>${worker.name}</strong><br/>
-                                    Datum: ${datum}<br/>
-                                    Leistung: ${(day.area || 0).toFixed(2)} ha
-                                `)
-                                    .style('left', (event.pageX + 10) + 'px')
-                                    .style('top', (event.pageY - 10) + 'px');
-                            })
-                            .on('mouseout', function () {
-                                d3.select(this).style('filter', 'none');
-                                tooltip.transition().duration(200).style('opacity', 0);
-                            });
+                        if (dayEndAngle > dayStartAngle) {
+                            const dayArc = d3.arc()
+                                .innerRadius(middleRadius + 5)
+                                .outerRadius(outerRadius)
+                                .startAngle(dayStartAngle)
+                                .endAngle(dayEndAngle);
+
+                            // Farbintensität basierend auf Tagesleistung (nicht akkumuliert)
+                            const maxDayArea = Math.max(...dailyWork.map(d => d.area || 0));
+                            const intensity = maxDayArea > 0 ? (day.area || 0) / maxDayArea : 0;
+                            const dayColor = d3.color(colorMap[worker.color] || '#667eea');
+                            dayColor.opacity = 0.4 + (intensity * 0.6);
+
+                            svg.append('path')
+                                .attr('d', dayArc)
+                                .attr('fill', dayColor.toString())
+                                .attr('stroke', '#0a0e27')
+                                .attr('stroke-width', 1)
+                                .style('cursor', 'pointer')
+                                .on('mouseover', function (event) {
+                                    d3.select(this).style('filter', 'brightness(1.4)');
+                                    const datum = day.datum_von || day.datum_bis || 'Unbekannt';
+                                    tooltip.transition().duration(200).style('opacity', 1);
+                                    tooltip.html(`
+                                        <strong>${worker.name}</strong><br/>
+                                        Datum: ${datum}<br/>
+                                        Tagesleistung: ${(day.area || 0).toFixed(2)} ha<br/>
+                                        Kumulativ: ${day.cumulativeArea.toFixed(2)} ha<br/>
+                                        Fortschritt: ${day.cumulativeProgress.toFixed(1)}%
+                                    `)
+                                        .style('left', (event.pageX + 10) + 'px')
+                                        .style('top', (event.pageY - 10) + 'px');
+                                })
+                                .on('mouseout', function () {
+                                    d3.select(this).style('filter', 'none');
+                                    tooltip.transition().duration(200).style('opacity', 0);
+                                });
+                        }
                     });
 
                     // Zeige nicht erfüllten Bereich als grauen Bereich
@@ -1095,74 +1117,70 @@
                 currentAngle = endAngle;
             });
 
-            // Äußerster Ring: Gesamtfortschritt vom Soll
-            const progressArc = d3.arc()
-                .innerRadius(progressRadius)
-                .outerRadius(progressRadius + 15)
-                .startAngle(0)
-                .endAngle((overallProgress / 100) * 2 * Math.PI);
-
-            // Hintergrund für Fortschrittsring
-            const progressBgArc = d3.arc()
-                .innerRadius(progressRadius)
-                .outerRadius(progressRadius + 15)
-                .startAngle(0)
-                .endAngle(2 * Math.PI);
-
-            svg.append('path')
-                .attr('d', progressBgArc)
-                .attr('fill', '#1e2139')
-                .attr('stroke', '#0a0e27')
-                .attr('stroke-width', 2);
-
-            svg.append('path')
-                .attr('d', progressArc)
-                .attr('fill', '#10b981')
-                .attr('stroke', '#0a0e27')
-                .attr('stroke-width', 2);
-
-            // Fortschritts-Text am äußeren Ring
-            svg.append('text')
-                .attr('x', 0)
-                .attr('y', -progressRadius - 25)
-                .attr('text-anchor', 'middle')
-                .attr('fill', '#10b981')
-                .attr('font-size', '14px')
-                .attr('font-weight', 'bold')
-                .text(`${overallProgress.toFixed(1)}% vom Soll erreicht`);
-
-            // Innerer Kreis - Soll-Informationen
+            // Innerer Kreis - Soll-Informationen mit Fortschrittsring
             svg.append('circle')
                 .attr('r', innerRadius - 5)
                 .attr('fill', '#1a1f3a')
                 .attr('stroke', '#252a47')
                 .attr('stroke-width', 2);
 
+            // Fortschrittsring im inneren Kreis (zurück nach innen)
+            const progressArc = d3.arc()
+                .innerRadius(innerRadius - 15)
+                .outerRadius(innerRadius - 10)
+                .startAngle(0)
+                .endAngle((overallProgress / 100) * 2 * Math.PI);
+
+            // Hintergrund für Fortschrittsring
+            const progressBgArc = d3.arc()
+                .innerRadius(innerRadius - 15)
+                .outerRadius(innerRadius - 10)
+                .startAngle(0)
+                .endAngle(2 * Math.PI);
+
+            svg.append('path')
+                .attr('d', progressBgArc)
+                .attr('fill', '#1e2139')
+                .attr('stroke', 'none');
+
+            svg.append('path')
+                .attr('d', progressArc)
+                .attr('fill', '#10b981')
+                .attr('stroke', 'none');
+
             // Text im inneren Kreis
             svg.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'middle')
-                .attr('y', -15)
-                .attr('fill', '#e4e6eb')
-                .attr('font-size', '16px')
+                .attr('y', -20)
+                .attr('fill', '#10b981')
+                .attr('font-size', '18px')
                 .attr('font-weight', 'bold')
-                .text('SOLL');
+                .text(`${overallProgress.toFixed(1)}%`);
 
             svg.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'middle')
-                .attr('y', 5)
+                .attr('y', -5)
+                .attr('fill', '#8b92b8')
+                .attr('font-size', '12px')
+                .text('vom Soll');
+
+            svg.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'middle')
+                .attr('y', 10)
                 .attr('fill', '#667eea')
-                .attr('font-size', '18px')
+                .attr('font-size', '16px')
                 .attr('font-weight', 'bold')
                 .text(`${totalArea.toFixed(0)} ha`);
 
             svg.append('text')
                 .attr('text-anchor', 'middle')
                 .attr('dominant-baseline', 'middle')
-                .attr('y', 20)
+                .attr('y', 25)
                 .attr('fill', '#10b981')
-                .attr('font-size', '14px')
+                .attr('font-size', '12px')
                 .text(`${completedArea.toFixed(1)} ha erreicht`);
 
             container.appendChild(svg.node());
