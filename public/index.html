@@ -1094,6 +1094,7 @@
 
                     // Zeige nicht erfüllten Bereich als grauen Bereich
                     if (worker.fortschritt < 100) {
+                        const filledAngle = segmentAngle * (worker.fortschritt / 100);
                         const unfilledStartAngle = startAngle + filledAngle;
                         const unfilledEndAngle = endAngle;
 
