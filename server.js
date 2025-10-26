@@ -301,11 +301,11 @@ app.post('/api/status', async (req, res) => {
   }
 });
 
-// Synchronisation - ERWEITERT mit Löschungserkennung
+// VEREINFACHTE Synchronisation - OHNE Löschung
 app.post('/api/sync', async (req, res) => {
-  const { action, layerName, data, timestamp, source, projectInfo } = req.body;
+  const { layerName, data, source, projectInfo } = req.body;
 
-  console.log(`POST /api/sync - Layer: ${layerName}, Action: ${action}, Polygons: ${data ? data.length : 0}`);
+  console.log(`POST /api/sync - Layer: ${layerName}, Polygons: ${data ? data.length : 0}`);
 
   if (!layerName || !data || !Array.isArray(data)) {
     return res.status(400).json({ error: 'LayerName und data array erforderlich' });
@@ -321,19 +321,12 @@ app.post('/api/sync', async (req, res) => {
 
     let newCount = 0;
     let updatedCount = 0;
-    let deletedCount = 0;
 
     for (const incomingPolygon of data) {
       if (!incomingPolygon.id) continue;
 
-      // Flexible Feldnamenerkennung für Fläche
-      let flaeche = incomingPolygon.flaeche_ha ||
-        incomingPolygon['Fläche_ha'] ||
-        incomingPolygon.Flaeche_ha ||
-        incomingPolygon['Flaeche_ha'] ||
-        incomingPolygon.area ||
-        incomingPolygon.flaeche ||
-        0;
+      // Fläche extrahieren
+      const flaeche = parseFloat(incomingPolygon.flaeche_ha || incomingPolygon.Flaeche_ha || 0);
 
       // Prüfe ob Polygon bereits existiert
       const existingResult = await client.query(`
@@ -342,13 +335,9 @@ app.post('/api/sync', async (req, res) => {
       `, [project.id, incomingPolygon.id]);
 
       if (existingResult.rows.length > 0) {
-        // Update - baue Query dynamisch auf
+        // UPDATE: Nur leere Felder überschreiben
         const existing = existingResult.rows[0];
-        const updateFields = [];
-        const updateValues = [];
-        let hasChanges = false;
-
-        // NEU: Erkenne Löschungen durch "x" Markierung
+        
         const incomingBearbeitet = incomingPolygon.bearbeitet || '';
         const incomingDatumVon = incomingPolygon.datum_von || '';
         const incomingDatumBis = incomingPolygon.datum_bis || '';
@@ -359,95 +348,63 @@ app.post('/api/sync', async (req, res) => {
         const existingDatumBis = existing.datum_bis || '';
         const existingFarbe = existing.farbe || '';
 
-        // Prüfe ob Client das Polygon zum Löschen markiert hat (bearbeitet = "x")
-        const isMarkedForDeletion = incomingBearbeitet === 'x';
+        let needsUpdate = false;
+        const updates = [];
+        const values = [];
 
-        if (isMarkedForDeletion) {
-          // Client hat zum Löschen markiert - lösche alle Felder
-          updateFields.push('bearbeitet = $' + (updateValues.length + 1));
-          updateValues.push('');
-          updateFields.push('datum_von = $' + (updateValues.length + 1));
-          updateValues.push('');
-          updateFields.push('datum_bis = $' + (updateValues.length + 1));
-          updateValues.push('');
-          updateFields.push('farbe = $' + (updateValues.length + 1));
-          updateValues.push('');
-          hasChanges = true;
-          deletedCount++;
-          console.log(`Löschung durch "x" Markierung für Polygon ${incomingPolygon.id}`);
-        } else {
-          // Normale Updates nur für leere Felder (Bidirektionale Sync)
-
-          // Fläche nur aktualisieren wenn wirklich anders
-          if (flaeche > 0 && Math.abs(parseFloat(existing.flaeche_ha || 0) - parseFloat(flaeche)) > 0.0001) {
-            updateFields.push('flaeche_ha = $' + (updateValues.length + 1));
-            updateValues.push(parseFloat(flaeche));
-            hasChanges = true;
-          }
-
-          // Bearbeitet: Update nur wenn Server leer und Client gefüllt (aber nicht "x")
-          if (!existingBearbeitet && incomingBearbeitet && incomingBearbeitet !== 'x') {
-            updateFields.push('bearbeitet = $' + (updateValues.length + 1));
-            updateValues.push(incomingBearbeitet);
-            hasChanges = true;
-          }
-
-          // Datum_von: Update nur wenn Server leer und Client gefüllt
-          if (!existingDatumVon && incomingDatumVon) {
-            updateFields.push('datum_von = $' + (updateValues.length + 1));
-            updateValues.push(incomingDatumVon);
-            hasChanges = true;
-          }
-
-          // Datum_bis: Update nur wenn Server leer und Client gefüllt
-          if (!existingDatumBis && incomingDatumBis) {
-            updateFields.push('datum_bis = $' + (updateValues.length + 1));
-            updateValues.push(incomingDatumBis);
-            hasChanges = true;
-          }
-
-          // Farbe: Update nur wenn Server leer und Client gefüllt
-          if (!existingFarbe && incomingFarbe) {
-            updateFields.push('farbe = $' + (updateValues.length + 1));
-            updateValues.push(incomingFarbe);
-            hasChanges = true;
-          }
-
-          // Geometry
-          if (!existing.geometry && incomingPolygon.geometry) {
-            updateFields.push('geometry = $' + (updateValues.length + 1));
-            updateValues.push(incomingPolygon.geometry);
-            hasChanges = true;
-          }
+        // Regel: Nur überschreiben wenn Server-Feld leer und Client-Feld gefüllt
+        if (!existingBearbeitet && incomingBearbeitet) {
+          updates.push('bearbeitet = $' + (values.length + 1));
+          values.push(incomingBearbeitet);
+          needsUpdate = true;
         }
 
-        if (hasChanges) {
-          updateFields.push('updated_at = CURRENT_TIMESTAMP');
-          updateFields.push('source = $' + (updateValues.length + 1));
-          updateValues.push(source || 'unknown');
+        if (!existingDatumVon && incomingDatumVon) {
+          updates.push('datum_von = $' + (values.length + 1));
+          values.push(incomingDatumVon);
+          needsUpdate = true;
+        }
 
-          // WHERE Klausel Parameter
-          updateValues.push(project.id);
-          updateValues.push(incomingPolygon.id);
+        if (!existingDatumBis && incomingDatumBis) {
+          updates.push('datum_bis = $' + (values.length + 1));
+          values.push(incomingDatumBis);
+          needsUpdate = true;
+        }
+
+        if (!existingFarbe && incomingFarbe) {
+          updates.push('farbe = $' + (values.length + 1));
+          values.push(incomingFarbe);
+          needsUpdate = true;
+        }
+
+        // Fläche immer aktualisieren wenn anders
+        if (flaeche > 0 && Math.abs(parseFloat(existing.flaeche_ha || 0) - flaeche) > 0.0001) {
+          updates.push('flaeche_ha = $' + (values.length + 1));
+          values.push(flaeche);
+          needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+          updates.push('updated_at = CURRENT_TIMESTAMP');
+          updates.push('source = $' + (values.length + 1));
+          values.push(source || 'unknown');
+
+          values.push(project.id);
+          values.push(incomingPolygon.id);
 
           const updateQuery = `
             UPDATE polygons 
-            SET ${updateFields.join(', ')}
-            WHERE project_id = $${updateValues.length - 1} AND polygon_id = $${updateValues.length}
+            SET ${updates.join(', ')}
+            WHERE project_id = $${values.length - 1} AND polygon_id = $${values.length}
           `;
 
-          await client.query(updateQuery, updateValues);
-
-          if (!isMarkedForDeletion) {
-            updatedCount++;
-            console.log(`Polygon ${incomingPolygon.id} aktualisiert`);
-          } else {
-            console.log(`Polygon ${incomingPolygon.id} gelöscht`);
-          }
+          await client.query(updateQuery, values);
+          updatedCount++;
+          console.log(`Polygon ${incomingPolygon.id} aktualisiert`);
         }
 
       } else {
-        // Neues Polygon einfügen
+        // NEUES Polygon einfügen
         await client.query(`
           INSERT INTO polygons (
             project_id, polygon_id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, source, updated_at
@@ -455,7 +412,7 @@ app.post('/api/sync', async (req, res) => {
         `, [
           project.id,
           incomingPolygon.id,
-          parseFloat(flaeche) || 0,
+          flaeche,
           incomingPolygon.bearbeitet || '',
           incomingPolygon.datum_von || '',
           incomingPolygon.datum_bis || '',
@@ -465,7 +422,7 @@ app.post('/api/sync', async (req, res) => {
         ]);
 
         newCount++;
-        console.log(`Neues Polygon ${incomingPolygon.id} erstellt (Fläche: ${flaeche} ha)`);
+        console.log(`Neues Polygon ${incomingPolygon.id} erstellt`);
       }
     }
 
@@ -479,7 +436,7 @@ app.post('/api/sync', async (req, res) => {
 
     await client.query('COMMIT');
 
-    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gelöscht: ${deletedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
+    console.log(`Sync abgeschlossen - Neu: ${newCount}, Aktualisiert: ${updatedCount}, Gesamt: ${allPolygonsResult.rows.length}`);
 
     res.json({
       success: true,
@@ -488,7 +445,6 @@ app.post('/api/sync', async (req, res) => {
         totalPolygons: allPolygonsResult.rows.length,
         newPolygons: newCount,
         updatedPolygons: updatedCount,
-        deletedPolygons: deletedCount,
         lastSync: new Date().toISOString()
       },
       serverData: allPolygonsResult.rows
