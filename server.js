@@ -236,6 +236,14 @@ async function calculateProjectStatistics(projectId) {
 }
 
 // API Routes
+// NEU: Server-Daten verarbeiten
+try {
+  var response = JSON.parse(xhr.responseText)
+  if (response.serverData && Array.isArray(response.serverData)) {
+    applyServerDataToLayer(response.serverData)
+    addLog("Server-Daten angewendet: " + response.serverData.length + " Polygone", "success")
+  }
+}
 
 // Health Check
 app.get('/health', async (req, res) => {
