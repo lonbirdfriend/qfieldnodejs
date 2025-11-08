@@ -514,7 +514,7 @@ app.get('/api/project/:projectName', async (req, res) => {
 
     const project = projectResult.rows[0];
 
-    const polygonsResult = await client.query(`
+    const polygonsResult = await pool.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, 
              created_at, updated_at, source
       FROM polygons 
