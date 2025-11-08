@@ -13,17 +13,20 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
 // PostgreSQL Konfiguration
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL Environment Variable ist nicht gesetzt!');
-  process.exit(1);
-}
+// Standardmäßig die neue Datenbank-URL verwenden, falls DATABASE_URL nicht gesetzt ist
+const defaultDatabaseUrl = 'postgresql://projektstand_52g5_user:TtJZAa9zj85gyIb5f2nwgtWojRw7OKGv@dpg-d47h56chg0os73fmc5v0-a.oregon-postgres.render.com/projektstand_52g5';
+const databaseUrl = process.env.DATABASE_URL || defaultDatabaseUrl;
+
+console.log('Verwende Datenbank:', databaseUrl.replace(/:[^:@]+@/, ':****@')); // Passwort verstecken
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  connectionString: databaseUrl,
+  ssl: {
+    rejectUnauthorized: false  // Wichtig für Render PostgreSQL
+  },
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000, // Erhöht von 2000 auf 10000ms
 });
 
 // Datenbankinitialisierung
@@ -511,7 +514,7 @@ app.get('/api/project/:projectName', async (req, res) => {
 
     const project = projectResult.rows[0];
 
-    const polygonsResult = await pool.query(`
+    const polygonsResult = await client.query(`
       SELECT polygon_id as id, flaeche_ha, bearbeitet, datum_von, datum_bis, farbe, geometry, 
              created_at, updated_at, source
       FROM polygons 
@@ -845,7 +848,7 @@ async function startServer() {
   console.log('Starte QField PostgreSQL Server...');
   console.log('Environment:', process.env.NODE_ENV || 'development');
   console.log('Port:', PORT);
-  console.log('Database URL vorhanden:', !!process.env.DATABASE_URL);
+  console.log('Database URL vorhanden:', !!databaseUrl);
 
   try {
     console.log('Initialisiere Datenbank...');
@@ -854,7 +857,7 @@ async function startServer() {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 PostgreSQL Server läuft auf Port ${PORT}
-Datenbank: PostgreSQL (${process.env.NODE_ENV === 'production' ? 'Render' : 'Lokal'})
+Datenbank: PostgreSQL auf Render
 Features: Datum_von/Datum_bis + Löschungserkennung
 Dashboard: ${process.env.NODE_ENV === 'production' ? `https://${process.env.RENDER_SERVICE_NAME || 'qfieldnodejs'}.onrender.com` : `http://localhost:${PORT}`}
 Health Check: /health
