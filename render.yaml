@@ -1,0 +1,34 @@
+services:
+  # Ihr bestehender Node.js Server
+  - type: web
+    name: qfield-nodejs-server
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        value: postgresql://projektstand_52g5_user:TtJZAa9zj85gyIb5f2nwgtWojRw7OKGv@dpg-d47h56chg0os73fmc5v0-a.oregon-postgres.render.com/projektstand_52g5
+
+  # Neuer Metabase Service
+  - type: web
+    name: metabase-dashboard
+    env: docker
+    dockerfilePath: ./Dockerfile.metabase
+    plan: free  # Kostenloser Plan
+    envVars:
+      - key: MB_DB_TYPE
+        value: postgres
+      - key: MB_DB_DBNAME
+        value: projektstand_52g5
+      - key: MB_DB_PORT
+        value: 5432
+      - key: MB_DB_USER
+        value: projektstand_52g5_user
+      - key: MB_DB_PASS
+        value: TtJZAa9zj85gyIb5f2nwgtWojRw7OKGv
+      - key: MB_DB_HOST
+        value: dpg-d47h56chg0os73fmc5v0-a.oregon-postgres.render.com
+      - key: MB_JETTY_HOST
+        value: 0.0.0.0
